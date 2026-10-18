@@ -787,6 +787,7 @@ fun TabSchedulesScreen(
     onMaxLaunchesChange: (Int) -> Unit,
     onOpenTimeDialog: () -> Unit
 ) {
+    val context = LocalContext.current
     val (start, end) = timeSchedule
     val (sH, sM) = start
     val (eH, eM) = end
@@ -1008,7 +1009,7 @@ fun TabSchedulesScreen(
                         ) {
                             OutlinedButton(
                                 onClick = {
-                                    QuotaManager.setTimeSchedule(context = LocalContext.current, sH = 22, sM = 0, eH = 5, eM = 0)
+                                    QuotaManager.setTimeSchedule(context = context, sH = 22, sM = 0, eH = 5, eM = 0)
                                     onOpenTimeDialog()
                                 },
                                 shape = RoundedCornerShape(8.dp),
