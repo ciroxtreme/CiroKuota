@@ -7,9 +7,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.os.Build
+import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
 import android.text.TextUtils
@@ -24,6 +24,14 @@ data class AppDataUsage(
     val iconCategory: String = "general"
 )
 
+data class SelectableApp(
+    val packageName: String,
+    val appName: String,
+    val category: String,
+    val isInstalled: Boolean,
+    val isSelected: Boolean
+)
+
 data class QuotaStatus(
     val totalWifiBytesToday: Long,
     val budgetMb: Float,
@@ -36,21 +44,21 @@ object QuotaManager {
 
     private const val KEY_BUDGET_MB = "daily_budget_mb"
     private const val KEY_KILLSWITCH = "killswitch_active"
+    private const val KEY_VPN_ACTIVE = "vpn_firewall_active"
     private const val KEY_FAMILY_DNS = "family_dns_active"
     private const val KEY_APP_LOCK = "app_lock_active"
     private const val KEY_AUTO_CUTOFF = "auto_cutoff_active"
     private const val KEY_IG_LIMIT_MIN = "ig_session_limit_minutes"
     private const val KEY_BROWSER_LIMIT_MIN = "browser_session_limit_minutes"
     private const val KEY_MANUAL_LOCK_UNTIL = "manual_lock_until"
+    private const val KEY_CHALLENGE_LOCK_UNTIL = "challenge_lock_until"
     private const val KEY_DARK_MODE = "is_dark_mode"
     private const val KEY_LAST_DATE = "last_tracked_date"
+    private const val KEY_BLACKHOLE_APPS = "blackhole_packages"
 
-    val MONITORED_IG_PACKAGES = setOf(
+    val DEFAULT_BLACKHOLE_APPS = setOf(
         "com.instagram.android",
-        "com.instagram.lite"
-    )
-
-    val MONITORED_BROWSER_PACKAGES = setOf(
+        "com.instagram.lite",
         "com.android.chrome",
         "com.google.android.apps.chrome",
         "org.mozilla.firefox",
@@ -59,8 +67,7 @@ object QuotaManager {
         "com.opera.browser",
         "com.opera.mini.native",
         "com.microsoft.emmx",
-        "com.duckduckgo.mobile.android",
-        "com.UCMobile.intl"
+        "com.duckduckgo.mobile.android"
     )
 
     private fun getPrefs(context: Context): SharedPreferences {
@@ -72,6 +79,9 @@ object QuotaManager {
 
     fun isKillswitchActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_KILLSWITCH, false)
     fun setKillswitchActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_KILLSWITCH, active).apply()
+
+    fun isVpnActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_VPN_ACTIVE, false)
+    fun setVpnActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_VPN_ACTIVE, active).apply()
 
     fun isFamilyDnsActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_FAMILY_DNS, true)
     fun setFamilyDnsActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_FAMILY_DNS, active).apply()
@@ -91,15 +101,95 @@ object QuotaManager {
     fun getManualLockUntil(context: Context): Long = getPrefs(context).getLong(KEY_MANUAL_LOCK_UNTIL, 0L)
     fun setManualLockUntil(context: Context, untilTimestamp: Long) = getPrefs(context).edit().putLong(KEY_MANUAL_LOCK_UNTIL, untilTimestamp).apply()
 
+    fun getChallengeLockUntil(context: Context): Long = getPrefs(context).getLong(KEY_CHALLENGE_LOCK_UNTIL, 0L)
+    fun setChallengeLockUntil(context: Context, untilTimestamp: Long) = getPrefs(context).edit().putLong(KEY_CHALLENGE_LOCK_UNTIL, untilTimestamp).apply()
+
     fun isDarkMode(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DARK_MODE, true)
     fun setDarkMode(context: Context, isDark: Boolean) = getPrefs(context).edit().putBoolean(KEY_DARK_MODE, isDark).apply()
 
-    fun isTargetMonitored(packageName: String): Boolean {
-        return MONITORED_IG_PACKAGES.contains(packageName) || MONITORED_BROWSER_PACKAGES.contains(packageName)
+    // Blackhole Apps Selection
+    fun getBlackholePackages(context: Context): Set<String> {
+        return getPrefs(context).getStringSet(KEY_BLACKHOLE_APPS, DEFAULT_BLACKHOLE_APPS) ?: DEFAULT_BLACKHOLE_APPS
     }
 
-    fun isInstagram(packageName: String): Boolean = MONITORED_IG_PACKAGES.contains(packageName)
-    fun isBrowser(packageName: String): Boolean = MONITORED_BROWSER_PACKAGES.contains(packageName)
+    fun setBlackholePackages(context: Context, pkgs: Set<String>) {
+        getPrefs(context).edit().putStringSet(KEY_BLACKHOLE_APPS, pkgs).apply()
+    }
+
+    fun toggleBlackholePackage(context: Context, pkg: String): Boolean {
+        val current = getBlackholePackages(context).toMutableSet()
+        val isNowSelected = if (current.contains(pkg)) {
+            current.remove(pkg)
+            false
+        } else {
+            current.add(pkg)
+            true
+        }
+        setBlackholePackages(context, current)
+        return isNowSelected
+    }
+
+    fun isTargetMonitored(context: Context, packageName: String): Boolean {
+        return getBlackholePackages(context).contains(packageName)
+    }
+
+    fun isInstagram(packageName: String): Boolean = packageName.contains("instagram")
+    fun isBrowser(packageName: String): Boolean = packageName.contains("chrome") ||
+            packageName.contains("firefox") ||
+            packageName.contains("browser") ||
+            packageName.contains("opera") ||
+            packageName.contains("duckduckgo") ||
+            packageName.contains("emmx")
+
+    fun getAllCandidateApps(context: Context): List<SelectableApp> {
+        val pm = context.packageManager
+        val selected = getBlackholePackages(context)
+        val candidateMap = linkedMapOf(
+            "com.instagram.android" to Pair("Instagram", "social"),
+            "com.instagram.lite" to Pair("Instagram Lite", "social"),
+            "com.android.chrome" to Pair("Google Chrome", "browser"),
+            "com.google.android.apps.chrome" to Pair("Chrome Dev", "browser"),
+            "org.mozilla.firefox" to Pair("Mozilla Firefox", "browser"),
+            "com.brave.browser" to Pair("Brave Browser", "browser"),
+            "com.sec.android.app.sbrowser" to Pair("Samsung Internet", "browser"),
+            "com.opera.browser" to Pair("Opera Browser", "browser"),
+            "com.opera.mini.native" to Pair("Opera Mini", "browser"),
+            "com.microsoft.emmx" to Pair("Microsoft Edge", "browser"),
+            "com.duckduckgo.mobile.android" to Pair("DuckDuckGo", "browser"),
+            "com.google.android.youtube" to Pair("YouTube", "video"),
+            "com.zhiliaoapp.musically" to Pair("TikTok", "social"),
+            "com.twitter.android" to Pair("X (Twitter)", "social")
+        )
+
+        val result = mutableListOf<SelectableApp>()
+        for ((pkg, info) in candidateMap) {
+            val isInstalled = try {
+                pm.getApplicationInfo(pkg, 0)
+                true
+            } catch (_: PackageManager.NameNotFoundException) {
+                false
+            }
+            result.add(
+                SelectableApp(
+                    packageName = pkg,
+                    appName = info.first,
+                    category = info.second,
+                    isInstalled = isInstalled,
+                    isSelected = selected.contains(pkg)
+                )
+            )
+        }
+        return result
+    }
+
+    fun isBatteryOptimizationIgnored(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false
+        } else {
+            true
+        }
+    }
 
     fun hasUsageStatsPermission(context: Context): Boolean {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
@@ -201,7 +291,7 @@ object QuotaManager {
         val startTime = getMidnightTimestamp()
         val endTime = System.currentTimeMillis()
 
-        val candidatePackages = MONITORED_IG_PACKAGES + MONITORED_BROWSER_PACKAGES + listOf(
+        val candidatePackages = getBlackholePackages(context) + listOf(
             "com.google.android.youtube",
             "com.zhiliaoapp.musically",
             "com.whatsapp",
@@ -233,8 +323,8 @@ object QuotaManager {
                 }
 
                 val category = when {
-                    MONITORED_IG_PACKAGES.contains(pkg) -> "instagram"
-                    MONITORED_BROWSER_PACKAGES.contains(pkg) -> "browser"
+                    isInstagram(pkg) -> "instagram"
+                    isBrowser(pkg) -> "browser"
                     pkg.contains("youtube") -> "youtube"
                     pkg.contains("tiktok") || pkg.contains("musically") -> "tiktok"
                     else -> "social"
@@ -245,7 +335,7 @@ object QuotaManager {
                         packageName = pkg,
                         appName = label,
                         bytesUsed = bytes,
-                        isMonitored = isTargetMonitored(pkg),
+                        isMonitored = isTargetMonitored(context, pkg),
                         iconCategory = category
                     )
                 )

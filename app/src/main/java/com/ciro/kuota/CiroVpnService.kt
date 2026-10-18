@@ -13,7 +13,6 @@ import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.nio.ByteBuffer
 
 class CiroVpnService : VpnService() {
 
@@ -64,33 +63,53 @@ class CiroVpnService : VpnService() {
     }
 
     private fun startVpn() {
-        if (vpnInterface != null) return
+        stopVpn()
 
         try {
             val builder = Builder()
-                .setSession("CiroKuota Firewall")
-                .addAddress("10.0.0.2", 32)
+                .setSession("CiroKuota Blackhole Firewall")
+                .addAddress("10.111.0.2", 32)
                 .addRoute("0.0.0.0", 0)
 
             val useFamilyDns = QuotaManager.isFamilyDnsActive(this)
             if (useFamilyDns) {
-                // Cloudflare 1.1.1.3 Family DNS (Blokir Otomatis Situs Dewasa & Malware di Level Jaringan)
+                // Cloudflare 1.1.1.3 Family Safe DNS
                 builder.addDnsServer("1.1.1.3")
                 builder.addDnsServer("1.0.0.3")
             } else {
                 builder.addDnsServer("1.1.1.1")
             }
 
-            // Exclude our own app from VPN loop
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Split Tunneling Per-Aplikasi:
+            // HANYA aplikasi target yang dimasukkan ke VPN Blackhole!
+            val targetApps = QuotaManager.getBlackholePackages(this)
+            val pm = packageManager
+            var addedCount = 0
+
+            for (pkg in targetApps) {
                 try {
-                    builder.addDisallowedApplication(packageName)
+                    pm.getApplicationInfo(pkg, 0)
+                    builder.addAllowedApplication(pkg)
+                    addedCount++
+                } catch (_: Exception) {
+                    // App not installed on device, skip
+                }
+            }
+
+            // Jika belum ada aplikasi terinstall yang cocok, lindungi dengan memasukkan package browser default
+            if (addedCount == 0) {
+                try {
+                    builder.addAllowedApplication("com.android.chrome")
                 } catch (_: Exception) {}
             }
 
-            vpnInterface = builder.establish()
+            // Tetapkan MTU yang stabil
+            builder.setMtu(1500)
 
-            // Coroutine loop to drain/drop traffic if Killswitch is engaged
+            vpnInterface = builder.establish()
+            QuotaManager.setVpnActive(this, true)
+
+            // Loop peredam traffic blackhole di background thread
             job = scope.launch {
                 val pfd = vpnInterface ?: return@launch
                 val input = FileInputStream(pfd.fileDescriptor)
@@ -98,23 +117,11 @@ class CiroVpnService : VpnService() {
 
                 while (isActive) {
                     try {
-                        val isKillswitch = QuotaManager.isKillswitchActive(applicationContext)
-                        val quotaStatus = QuotaManager.getQuotaStatus(applicationContext)
-                        val isAutoCutoff = QuotaManager.isAutoCutoffActive(applicationContext) && quotaStatus.isLimitReached
-
-                        val shouldDropAll = isKillswitch || isAutoCutoff
-
                         val length = input.read(buffer)
-                        if (length > 0) {
-                            if (shouldDropAll) {
-                                // Blackhole / Killswitch: Paket langsung dibuang (0 bytes forwarded)
-                                continue
-                            }
-                            // Local DNS pass-through filtering
-                        } else {
-                            delay(50)
+                        if (length <= 0) {
+                            delay(100)
                         }
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         break
                     }
                 }
@@ -132,6 +139,7 @@ class CiroVpnService : VpnService() {
             vpnInterface?.close()
         } catch (_: Exception) {}
         vpnInterface = null
+        QuotaManager.setVpnActive(this, false)
     }
 
     override fun onDestroy() {
@@ -164,10 +172,11 @@ class CiroVpnService : VpnService() {
         )
 
         val isKill = QuotaManager.isKillswitchActive(this)
+        val targetCount = QuotaManager.getBlackholePackages(this).size
         val statusText = if (isKill) {
-            "🚨 Killswitch Aktif: Seluruh internet diputus!"
+            "🚨 Killswitch Aktif: $targetCount aplikasi diblokir internetnya!"
         } else {
-            "🛡️ Firewall & Family DNS Aktif: Menghemat kuota Wi-Fi"
+            "🛡️ Blackhole Firewall Aktif ($targetCount aplikasi diproteksi)"
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
