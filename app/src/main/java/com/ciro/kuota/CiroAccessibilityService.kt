@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.*
 
 class CiroAccessibilityService : AccessibilityService() {
@@ -25,33 +26,82 @@ class CiroAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         try {
             if (event == null) return
-            if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+            if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+                event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+
             val pkg = event.packageName?.toString() ?: return
 
             // Skip our own app, system UI, launchers, keyboard
             if (pkg == packageName || pkg == "com.android.systemui" || pkg.contains("launcher") || pkg.contains("inputmethod")) {
-                if (currentForegroundPackage != null && QuotaManager.isTargetMonitored(applicationContext, currentForegroundPackage!!)) {
+                if (currentForegroundPackage != null && QuotaManager.isAppBlockMonitored(applicationContext, currentForegroundPackage!!)) {
                     recordSessionTime(currentForegroundPackage!!)
                 }
                 currentForegroundPackage = null
                 return
             }
 
-            if (pkg != currentForegroundPackage) {
-                if (currentForegroundPackage != null && QuotaManager.isTargetMonitored(applicationContext, currentForegroundPackage!!)) {
-                    recordSessionTime(currentForegroundPackage!!)
+            // 1. Deteksi Cepat Domain Dewasa & Pornografi (missav.ai, pornhub, dll)
+            if (QuotaManager.isAdultFilterActive(applicationContext)) {
+                // Cek teks langsung pada event
+                for (t in event.text) {
+                    val str = t?.toString() ?: continue
+                    if (QuotaManager.isAdultDomain(str)) {
+                        triggerBlock("Browser (Situs Terlarang)", "🚨 Akses ke situs dewasa ($str) diblokir otomatis demi menjaga fokus & privasi Tuan Ciro.")
+                        return
+                    }
                 }
-                currentForegroundPackage = pkg
-                sessionStartTime = System.currentTimeMillis()
 
-                // Immediate check when entering target app
-                if (QuotaManager.isTargetMonitored(applicationContext, pkg)) {
-                    checkAndEnforceBlock(pkg)
+                // Jika sedang membuka browser, pindai URL bar dan elemen jendela
+                if (QuotaManager.isBrowserPackage(pkg)) {
+                    val root = try { rootInActiveWindow ?: event.source } catch (_: Throwable) { null }
+                    val detectedAdult = scanForAdultContent(root)
+                    if (detectedAdult != null) {
+                        triggerBlock("Browser (Situs Dewasa)", "🚨 Akses ke domain dewasa ($detectedAdult) diblokir otomatis oleh CiroKuota!")
+                        return
+                    }
+                }
+            }
+
+            // 2. Monitoring Perubahan Jendela & Sesi Aplikasi
+            if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                if (pkg != currentForegroundPackage) {
+                    if (currentForegroundPackage != null && QuotaManager.isAppBlockMonitored(applicationContext, currentForegroundPackage!!)) {
+                        recordSessionTime(currentForegroundPackage!!)
+                    }
+                    currentForegroundPackage = pkg
+                    sessionStartTime = System.currentTimeMillis()
+
+                    // Immediate check when entering target app
+                    if (QuotaManager.isAppBlockMonitored(applicationContext, pkg)) {
+                        checkAndEnforceBlock(pkg)
+                    }
                 }
             }
         } catch (_: Throwable) {
             // Anti-crash: Layanan aksesibilitas tidak boleh crash agar tidak dicabut oleh OS Android
         }
+    }
+
+    private fun scanForAdultContent(node: AccessibilityNodeInfo?, depth: Int = 0): String? {
+        if (node == null || depth > 8) return null
+        try {
+            val text = node.text?.toString()
+            if (!text.isNullOrBlank() && QuotaManager.isAdultDomain(text)) {
+                return text
+            }
+            val desc = node.contentDescription?.toString()
+            if (!desc.isNullOrBlank() && QuotaManager.isAdultDomain(desc)) {
+                return desc
+            }
+
+            for (i in 0 until node.childCount) {
+                val child = try { node.getChild(i) } catch (_: Throwable) { null } ?: continue
+                val found = scanForAdultContent(child, depth + 1)
+                try { child.recycle() } catch (_: Throwable) {}
+                if (found != null) return found
+            }
+        } catch (_: Throwable) {}
+        return null
     }
 
     private fun startTicker() {
@@ -61,7 +111,7 @@ class CiroAccessibilityService : AccessibilityService() {
                 try {
                     delay(1000)
                     val pkg = currentForegroundPackage
-                    if (pkg != null && QuotaManager.isTargetMonitored(applicationContext, pkg)) {
+                    if (pkg != null && QuotaManager.isAppBlockMonitored(applicationContext, pkg)) {
                         val now = System.currentTimeMillis()
                         val sessionSeconds = (now - sessionStartTime) / 1000
                         QuotaManager.addAppUsageSeconds(applicationContext, pkg, 1)
@@ -96,17 +146,11 @@ class CiroAccessibilityService : AccessibilityService() {
             val manualUntil = QuotaManager.getManualLockUntil(applicationContext)
             val isManualLocked = manualUntil > now
 
-            val isInstagram = QuotaManager.isInstagram(pkg)
-            val isBrowser = QuotaManager.isBrowser(pkg)
+            val isMonitored = QuotaManager.isAppBlockMonitored(applicationContext, pkg)
+            if (!isMonitored && !isKillswitch && !isAutoCutoff) return
 
-            val igLimitSec = QuotaManager.getIgSessionLimitMinutes(applicationContext) * 60L
-            val browserLimitSec = QuotaManager.getBrowserSessionLimitMinutes(applicationContext) * 60L
-
-            val appName = when {
-                isInstagram -> "Instagram"
-                isBrowser -> "Browser Web"
-                else -> "Aplikasi Target"
-            }
+            val sessionLimitSec = QuotaManager.getAppBlockSessionLimitMinutes(applicationContext) * 60L
+            val appName = QuotaManager.getAppDisplayName(applicationContext, pkg)
 
             var reason: String? = null
 
@@ -116,16 +160,13 @@ class CiroAccessibilityService : AccessibilityService() {
                 }
                 isManualLocked -> {
                     val remainingMin = ((manualUntil - now) / 60000) + 1
-                    reason = "🔒 Kunci Sesi Khilaf aktif! Aplikasi terkunci selama $remainingMin menit lagi."
+                    reason = "🔒 Kunci Sesi Khilaf aktif! $appName terkunci selama $remainingMin menit lagi."
                 }
                 isAutoCutoff -> {
-                    reason = "📊 Budget Kuota Wi-Fi Hari Ini (${quotaStatus.budgetMb.toInt()} MB) telah habis! Internet ke $appName dihentikan otomatis."
+                    reason = "📊 Budget Kuota Wi-Fi Hari Ini (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName dihentikan otomatis."
                 }
-                isInstagram && currentSessionSeconds >= igLimitSec -> {
-                    reason = "⏳ Batas Waktu Scrolling Instagram (${igLimitSec / 60} menit) telah tercapai! Kuota Wi-Fi terselamatkan."
-                }
-                isBrowser && currentSessionSeconds >= browserLimitSec -> {
-                    reason = "⏳ Batas Waktu Nonton Browser (${browserLimitSec / 60} menit) telah tercapai! Hindari streaming video boros kuota."
+                currentSessionSeconds >= sessionLimitSec -> {
+                    reason = "⏳ Batas Waktu Sesi $appName (${sessionLimitSec / 60} menit) telah tercapai! Kuota & waktu Anda terselamatkan."
                 }
             }
 

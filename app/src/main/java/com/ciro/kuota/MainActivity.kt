@@ -72,6 +72,7 @@ class MainActivity : ComponentActivity() {
 
 enum class CiroTab(val title: String, val icon: ImageVector) {
     PROTECTION("Proteksi", Icons.Default.Shield),
+    BLACKHOLE("Blackhole", Icons.Default.FilterAlt),
     HABIT_LOCK("Rem Khilaf", Icons.Default.HourglassTop),
     SETTINGS("Pengaturan", Icons.Default.Settings)
 }
@@ -92,15 +93,18 @@ fun CiroKuotaMainScreen(
     var isFamilyDns by remember { mutableStateOf(QuotaManager.isFamilyDnsActive(context)) }
     var isAppLock by remember { mutableStateOf(QuotaManager.isAppLockActive(context)) }
     var isAutoCutoff by remember { mutableStateOf(QuotaManager.isAutoCutoffActive(context)) }
-    var igLimitMin by remember { mutableStateOf(QuotaManager.getIgSessionLimitMinutes(context)) }
-    var browserLimitMin by remember { mutableStateOf(QuotaManager.getBrowserSessionLimitMinutes(context)) }
+    var isAdultFilter by remember { mutableStateOf(QuotaManager.isAdultFilterActive(context)) }
     var manualLockUntil by remember { mutableStateOf(QuotaManager.getManualLockUntil(context)) }
-    var selectedBlackholeApps by remember { mutableStateOf(QuotaManager.getBlackholePackages(context)) }
 
-    // State Data Pemakaian
+    // State Aplikasi Blackhole & AppBlock
+    var selectedBlackholeApps by remember { mutableStateOf(QuotaManager.getBlackholePackages(context)) }
+    var appBlockPackages by remember { mutableStateOf(QuotaManager.getAppBlockPackages(context)) }
+    var appBlockSessionLimitMin by remember { mutableStateOf(QuotaManager.getAppBlockSessionLimitMinutes(context)) }
+
+    // State Data Pemakaian & Candidate Apps
     var quotaStatus by remember { mutableStateOf(QuotaManager.getQuotaStatus(context)) }
     var topApps by remember { mutableStateOf(QuotaManager.getTopMonitoredAppsUsage(context)) }
-    var candidateApps by remember { mutableStateOf(QuotaManager.getAllCandidateApps(context)) }
+    var candidateApps by remember { mutableStateOf(QuotaManager.getAllCandidateApps(context, selectedBlackholeApps)) }
     var hasUsagePerm by remember { mutableStateOf(QuotaManager.hasUsageStatsPermission(context)) }
     var hasAccessPerm by remember { mutableStateOf(QuotaManager.hasAccessibilityPermission(context)) }
     var isBatteryIgnored by remember { mutableStateOf(QuotaManager.isBatteryOptimizationIgnored(context)) }
@@ -146,10 +150,12 @@ fun CiroKuotaMainScreen(
         }
     }
 
-    // Refresh candidate apps saat pertama dibuka atau saat berpindah ke tab Pengaturan
+    // Refresh candidate apps saat berpindah ke tab Blackhole atau Rem Khilaf
     LaunchedEffect(currentTab) {
-        if (currentTab == CiroTab.SETTINGS) {
-            candidateApps = QuotaManager.getAllCandidateApps(context)
+        if (currentTab == CiroTab.BLACKHOLE) {
+            candidateApps = QuotaManager.getAllCandidateApps(context, selectedBlackholeApps)
+        } else if (currentTab == CiroTab.HABIT_LOCK) {
+            candidateApps = QuotaManager.getAllCandidateApps(context, appBlockPackages)
         }
     }
 
@@ -274,6 +280,7 @@ fun CiroKuotaMainScreen(
                         isVpnFirewall = isVpnFirewall,
                         isFamilyDns = isFamilyDns,
                         isAutoCutoff = isAutoCutoff,
+                        isAdultFilter = isAdultFilter,
                         topApps = topApps,
                         cardColor = cardColor,
                         cardBorder = cardBorder,
@@ -311,6 +318,43 @@ fun CiroKuotaMainScreen(
                         onToggleAutoCutoff = {
                             isAutoCutoff = !isAutoCutoff
                             QuotaManager.setAutoCutoffActive(context, isAutoCutoff)
+                        },
+                        onToggleAdultFilter = {
+                            isAdultFilter = !isAdultFilter
+                            QuotaManager.setAdultFilterActive(context, isAdultFilter)
+                            if (isVpnFirewall) startVpnSafely()
+                            Toast.makeText(context, if (isAdultFilter) "🛡️ Pemblokir Situs Dewasa Aktif!" else "Pemblokir Situs Dewasa Dimatikan", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+
+                CiroTab.BLACKHOLE -> {
+                    TabBlackholeScreen(
+                        isDark = isDark,
+                        candidateApps = candidateApps,
+                        cardColor = cardColor,
+                        cardBorder = cardBorder,
+                        textPrimary = textPrimary,
+                        textSecondary = textSecondary,
+                        onToggleApp = { pkg ->
+                            QuotaManager.toggleBlackholePackage(context, pkg)
+                            selectedBlackholeApps = QuotaManager.getBlackholePackages(context)
+                            candidateApps = QuotaManager.getAllCandidateApps(context, selectedBlackholeApps)
+                            if (isVpnFirewall) startVpnSafely() // Reload VPN with updated apps
+                        },
+                        onResetDefault = {
+                            QuotaManager.resetToDefaultApps(context)
+                            selectedBlackholeApps = QuotaManager.getBlackholePackages(context)
+                            candidateApps = QuotaManager.getAllCandidateApps(context, selectedBlackholeApps)
+                            if (isVpnFirewall) startVpnSafely()
+                            Toast.makeText(context, "Aplikasi blackhole direset ke bawaan!", Toast.LENGTH_SHORT).show()
+                        },
+                        onClearAll = {
+                            QuotaManager.unselectAllApps(context)
+                            selectedBlackholeApps = QuotaManager.getBlackholePackages(context)
+                            candidateApps = QuotaManager.getAllCandidateApps(context, selectedBlackholeApps)
+                            if (isVpnFirewall) startVpnSafely()
+                            Toast.makeText(context, "Semua aplikasi dibatalkan pilihannya!", Toast.LENGTH_SHORT).show()
                         }
                     )
                 }
@@ -318,32 +362,34 @@ fun CiroKuotaMainScreen(
                 CiroTab.HABIT_LOCK -> {
                     TabHabitLockScreen(
                         isDark = isDark,
-                        igLimitMin = igLimitMin,
-                        browserLimitMin = browserLimitMin,
+                        appBlockPackages = appBlockPackages,
+                        sessionLimitMin = appBlockSessionLimitMin,
                         manualLockUntil = manualLockUntil,
                         isAppLock = isAppLock,
                         hasAccessPerm = hasAccessPerm,
+                        candidateApps = candidateApps,
                         cardColor = cardColor,
                         cardBorder = cardBorder,
                         textPrimary = textPrimary,
                         textSecondary = textSecondary,
-                        onIgLimitChange = { min ->
-                            igLimitMin = min
-                            QuotaManager.setIgSessionLimitMinutes(context, min)
-                        },
-                        onBrowserLimitChange = { min ->
-                            browserLimitMin = min
-                            QuotaManager.setBrowserSessionLimitMinutes(context, min)
+                        onSessionLimitChange = { min ->
+                            appBlockSessionLimitMin = min
+                            QuotaManager.setAppBlockSessionLimitMinutes(context, min)
                         },
                         onToggleAppLock = {
                             isAppLock = !isAppLock
                             QuotaManager.setAppLockActive(context, isAppLock)
                         },
+                        onToggleAppBlockPackage = { pkg ->
+                            QuotaManager.toggleAppBlockPackage(context, pkg)
+                            appBlockPackages = QuotaManager.getAppBlockPackages(context)
+                            candidateApps = QuotaManager.getAllCandidateApps(context, appBlockPackages)
+                        },
                         onSetManualLock = { durationMillis ->
                             val until = System.currentTimeMillis() + durationMillis
                             manualLockUntil = until
                             QuotaManager.setManualLockUntil(context, until)
-                            Toast.makeText(context, "Aplikasi target dikunci!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Aplikasi target dikunci ketat!", Toast.LENGTH_SHORT).show()
                         },
                         onUnlockSuccess = {
                             manualLockUntil = 0L
@@ -356,31 +402,13 @@ fun CiroKuotaMainScreen(
                 CiroTab.SETTINGS -> {
                     TabSettingsScreen(
                         isDark = isDark,
-                        candidateApps = candidateApps,
                         hasAccessPerm = hasAccessPerm,
                         hasUsagePerm = hasUsagePerm,
                         isBatteryIgnored = isBatteryIgnored,
                         cardColor = cardColor,
                         cardBorder = cardBorder,
                         textPrimary = textPrimary,
-                        textSecondary = textSecondary,
-                        onToggleApp = { pkg ->
-                            QuotaManager.toggleBlackholePackage(context, pkg)
-                            candidateApps = QuotaManager.getAllCandidateApps(context)
-                            if (isVpnFirewall) startVpnSafely() // Reload VPN with updated apps
-                        },
-                        onResetDefault = {
-                            QuotaManager.resetToDefaultApps(context)
-                            candidateApps = QuotaManager.getAllCandidateApps(context)
-                            if (isVpnFirewall) startVpnSafely()
-                            Toast.makeText(context, "Aplikasi target direset ke bawaan!", Toast.LENGTH_SHORT).show()
-                        },
-                        onClearAll = {
-                            QuotaManager.unselectAllApps(context)
-                            candidateApps = QuotaManager.getAllCandidateApps(context)
-                            if (isVpnFirewall) startVpnSafely()
-                            Toast.makeText(context, "Semua aplikasi dibatalkan pilihannya!", Toast.LENGTH_SHORT).show()
-                        }
+                        textSecondary = textSecondary
                     )
                 }
             }
@@ -398,6 +426,7 @@ fun TabProtectionScreen(
     isVpnFirewall: Boolean,
     isFamilyDns: Boolean,
     isAutoCutoff: Boolean,
+    isAdultFilter: Boolean,
     topApps: List<AppDataUsage>,
     cardColor: Color,
     cardBorder: Color,
@@ -407,7 +436,8 @@ fun TabProtectionScreen(
     onToggleKillswitch: () -> Unit,
     onToggleVpn: () -> Unit,
     onToggleDns: () -> Unit,
-    onToggleAutoCutoff: () -> Unit
+    onToggleAutoCutoff: () -> Unit,
+    onToggleAdultFilter: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -469,7 +499,7 @@ fun TabProtectionScreen(
                 // DNS Family Shield
                 QuickSwitchCard(
                     title = "DNS Family Shield (1.1.1.3)",
-                    subtitle = "Blokir otomatis domain situs dewasa di level jaringan",
+                    subtitle = "Blokir otomatis malware & domain berbahaya via Cloudflare",
                     icon = Icons.Default.Shield,
                     isActive = isFamilyDns,
                     activeColor = AccentGreen,
@@ -478,6 +508,20 @@ fun TabProtectionScreen(
                     textPrimary = textPrimary,
                     textSecondary = textSecondary,
                     onToggle = onToggleDns
+                )
+
+                // Adult / Porn / MissAV Filter
+                QuickSwitchCard(
+                    title = "Blokir Situs Dewasa (MissAV & Porn)",
+                    subtitle = "Cegat missav.ai & situs dewasa via DNS NXDOMAIN & Aksesibilitas",
+                    icon = Icons.Default.Block,
+                    isActive = isAdultFilter,
+                    activeColor = AccentRed,
+                    cardBg = cardColor,
+                    cardBorder = cardBorder,
+                    textPrimary = textPrimary,
+                    textSecondary = textSecondary,
+                    onToggle = onToggleAdultFilter
                 )
 
                 // Auto Cutoff
@@ -536,22 +580,296 @@ fun TabProtectionScreen(
     }
 }
 
-// ================= TAB 2: REM KHILAF & TANTANGAN NERAKA =================
+// ================= TAB 2: BLACKHOLE FIREWALL (PEMILIH APLIKASI) =================
 @Composable
-fun TabHabitLockScreen(
+fun TabBlackholeScreen(
     isDark: Boolean,
-    igLimitMin: Int,
-    browserLimitMin: Int,
-    manualLockUntil: Long,
-    isAppLock: Boolean,
-    hasAccessPerm: Boolean,
+    candidateApps: List<SelectableApp>,
     cardColor: Color,
     cardBorder: Color,
     textPrimary: Color,
     textSecondary: Color,
-    onIgLimitChange: (Int) -> Unit,
-    onBrowserLimitChange: (Int) -> Unit,
+    onToggleApp: (String) -> Unit,
+    onResetDefault: () -> Unit,
+    onClearAll: () -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var filterMode by remember { mutableStateOf("ALL") } // ALL, USER, SYSTEM, SELECTED
+
+    val userAppCount = remember(candidateApps) { candidateApps.count { !it.isSystemApp } }
+    val systemAppCount = remember(candidateApps) { candidateApps.count { it.isSystemApp } }
+    val selectedCount = remember(candidateApps) { candidateApps.count { it.isSelected } }
+
+    val filteredApps = remember(candidateApps, searchQuery, filterMode) {
+        candidateApps.filter { app ->
+            val matchesSearch = searchQuery.isBlank() ||
+                    app.appName.contains(searchQuery, ignoreCase = true) ||
+                    app.packageName.contains(searchQuery, ignoreCase = true)
+
+            val matchesFilter = when (filterMode) {
+                "USER" -> !app.isSystemApp
+                "SYSTEM" -> app.isSystemApp
+                "SELECTED" -> app.isSelected
+                else -> true
+            }
+
+            matchesSearch && matchesFilter
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // Section Header
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SectionHeader(title = "PILIH APLIKASI BLACKHOLE (FIREWALL)", textSecondary = textSecondary)
+                Text(
+                    text = "Aplikasi yang dicentang akan diputus akses internetnya saat Kuota Habis atau Killswitch aktif. $selectedCount dari ${candidateApps.size} aplikasi dipilih.",
+                    fontFamily = PoppinsFontFamily,
+                    fontSize = 11.sp,
+                    color = textSecondary
+                )
+            }
+        }
+
+        // Search Bar & Filter Controls
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Search Input
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = {
+                        Text(
+                            text = "Cari nama aplikasi atau package...",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 12.sp,
+                            color = textSecondary
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Cari",
+                            tint = textSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Bersihkan",
+                                    tint = textSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AccentGreen,
+                        unfocusedBorderColor = cardBorder,
+                        focusedContainerColor = cardColor,
+                        unfocusedContainerColor = cardColor
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Filter Chips
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        "ALL" to "Semua (${candidateApps.size})",
+                        "USER" to "User ($userAppCount)",
+                        "SYSTEM" to "Sistem ($systemAppCount)",
+                        "SELECTED" to "Terpilih ($selectedCount)"
+                    ).forEach { (mode, label) ->
+                        val isSel = filterMode == mode
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSel) AccentGreen else cardColor,
+                            border = BorderStroke(1.dp, if (isSel) AccentGreen else cardBorder),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { filterMode = mode }
+                        ) {
+                            Text(
+                                text = label,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp,
+                                color = if (isSel) Color.Black else textPrimary,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Batch Action Buttons - Rapi & Simetris (42.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onResetDefault,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(15.dp), tint = textPrimary)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Reset Default",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = textPrimary,
+                            maxLines = 1
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onClearAll,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(15.dp), tint = AccentRed)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Batal Pilih",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AccentRed,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+        }
+
+        // List of Candidate Apps
+        if (filteredApps.isEmpty()) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = cardColor,
+                    border = BorderStroke(1.dp, cardBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Tidak ada aplikasi yang cocok dengan pencarian / filter ini.",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 11.5.sp,
+                        color = textSecondary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(20.dp)
+                    )
+                }
+            }
+        } else {
+            items(filteredApps.size) { idx ->
+                val app = filteredApps[idx]
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = cardColor,
+                    border = BorderStroke(1.dp, if (app.isSelected) AccentGreen.copy(alpha = 0.5f) else cardBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onToggleApp(app.packageName) }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Checkbox(
+                                checked = app.isSelected,
+                                onCheckedChange = { onToggleApp(app.packageName) },
+                                colors = CheckboxDefaults.colors(checkedColor = AccentGreen)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = app.appName,
+                                        fontFamily = PoppinsFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        color = textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = if (app.isSystemApp) Color.Gray.copy(alpha = 0.2f) else AccentGreen.copy(alpha = 0.15f)
+                                    ) {
+                                        Text(
+                                            text = if (app.isSystemApp) "Sistem" else "User",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontSize = 8.5.sp,
+                                            color = if (app.isSystemApp) textSecondary else AccentGreen,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = app.packageName,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 9.sp,
+                                    color = textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item { Spacer(modifier = Modifier.height(20.dp)) }
+    }
+}
+
+// ================= TAB 3: REM KHILAF (GAYA APPBLOCK & TANTANGAN NERAKA) =================
+@Composable
+fun TabHabitLockScreen(
+    isDark: Boolean,
+    appBlockPackages: Set<String>,
+    sessionLimitMin: Int,
+    manualLockUntil: Long,
+    isAppLock: Boolean,
+    hasAccessPerm: Boolean,
+    candidateApps: List<SelectableApp>,
+    cardColor: Color,
+    cardBorder: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onSessionLimitChange: (Int) -> Unit,
     onToggleAppLock: () -> Unit,
+    onToggleAppBlockPackage: (String) -> Unit,
     onSetManualLock: (Long) -> Unit,
     onUnlockSuccess: () -> Unit
 ) {
@@ -563,13 +881,14 @@ fun TabHabitLockScreen(
     var isTotpConfigured by remember { mutableStateOf(TotpHelper.isConfigured(context)) }
     var showChallengeDialog by remember { mutableStateOf(false) }
     var showTestDialog by remember { mutableStateOf(false) }
+    var showAppPickerDialog by remember { mutableStateOf(false) }
     var setupInputCode by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Status Kunci Aktif
+        // Status Kunci Ketat / Strict Mode
         item {
             if (isLocked) {
                 val remMinutes = ((manualLockUntil - now) / 60000) + 1
@@ -592,7 +911,7 @@ fun TabHabitLockScreen(
                             color = AccentRed
                         )
                         Text(
-                            text = "Instagram & Browser terkunci selama $remMinutes menit lagi.",
+                            text = "${appBlockPackages.size} aplikasi target terkunci selama $remMinutes menit lagi.",
                             fontFamily = PoppinsFontFamily,
                             fontSize = 12.sp,
                             color = textPrimary,
@@ -623,21 +942,15 @@ fun TabHabitLockScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Kunci Khilaf Manual Sekarang:",
-                                fontFamily = PoppinsFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                color = textPrimary
-                            )
-                        }
                         Text(
-                            text = "Kunci langsung Instagram & Browser agar tangan tidak gatal streaming:",
+                            text = "Kunci Khilaf Manual (Strict Mode):",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            color = textPrimary
+                        )
+                        Text(
+                            text = "Kunci seketika seluruh aplikasi yang terpilih di Profil Target agar tidak bisa dibuka:",
                             fontFamily = PoppinsFontFamily,
                             fontSize = 11.sp,
                             color = textSecondary
@@ -679,7 +992,174 @@ fun TabHabitLockScreen(
             }
         }
 
-        // Pengaturan Jatah Sesi
+        // PROFIL TARGET APLIKASI (GAYA APPBLOCK)
+        item {
+            SectionHeader(title = "PROFIL APLIKASI TARGET (APPBLOCK STYLE)", textSecondary = textSecondary)
+        }
+
+        item {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = cardColor,
+                border = BorderStroke(1.dp, cardBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Rem Khilaf & Deteksi Sesi",
+                                fontFamily = PoppinsFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.5.sp,
+                                color = textPrimary
+                            )
+                            Text(
+                                text = "${appBlockPackages.size} aplikasi dipilih untuk dipantau durasi & gemboknya.",
+                                fontFamily = PoppinsFontFamily,
+                                fontSize = 11.sp,
+                                color = textSecondary
+                            )
+                        }
+
+                        Switch(
+                            checked = isAppLock,
+                            onCheckedChange = { onToggleAppLock() },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = AccentAmber,
+                                uncheckedThumbColor = textSecondary,
+                                uncheckedTrackColor = cardBorder
+                            )
+                        )
+                    }
+
+                    Divider(color = cardBorder, thickness = 0.8.dp)
+
+                    // Daftar Nama Aplikasi Terpilih (Chips Preview)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Aplikasi Terkunci Saat Ini:",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 11.5.sp,
+                            color = textSecondary
+                        )
+
+                        if (appBlockPackages.isEmpty()) {
+                            Text(
+                                text = "Belum ada aplikasi yang dipilih. Klik tombol di bawah untuk memilih aplikasi.",
+                                fontFamily = PoppinsFontFamily,
+                                fontSize = 11.sp,
+                                color = textSecondary
+                            )
+                        } else {
+                            val displayList = appBlockPackages.toList().take(6)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                displayList.take(3).forEach { pkg ->
+                                    val name = QuotaManager.getAppDisplayName(context, pkg)
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = AccentAmber.copy(alpha = 0.15f),
+                                        border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.4f)),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text(
+                                            text = name,
+                                            fontFamily = PoppinsFontFamily,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = AccentAmber,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (appBlockPackages.size > 3) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    val rest = displayList.drop(3)
+                                    rest.forEach { pkg ->
+                                        val name = QuotaManager.getAppDisplayName(context, pkg)
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = AccentAmber.copy(alpha = 0.15f),
+                                            border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.4f)),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(
+                                                text = name,
+                                                fontFamily = PoppinsFontFamily,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = AccentAmber,
+                                                textAlign = TextAlign.Center,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                    if (appBlockPackages.size > 6) {
+                                        val moreCount = appBlockPackages.size - 6
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = cardBorder,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text(
+                                                text = "+$moreCount lainnya",
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontSize = 10.sp,
+                                                color = textSecondary,
+                                                textAlign = TextAlign.Center,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Tombol Kelola Aplikasi Terkunci
+                    Button(
+                        onClick = { showAppPickerDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = cardBorder),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp), tint = textPrimary)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Kelola Aplikasi Terkunci (${appBlockPackages.size})",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp,
+                            color = textPrimary
+                        )
+                    }
+                }
+            }
+        }
+
+        // PENGATURAN JATAH SESI DINAMIS
         item {
             SectionHeader(title = "JATAH DURASI SESI", textSecondary = textSecondary)
         }
@@ -693,36 +1173,22 @@ fun TabHabitLockScreen(
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Instagram Sesi
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = "Batas Scroll Instagram per Sesi:", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = textPrimary)
-                            Text(text = "$igLimitMin Menit", fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AccentAmber)
-                        }
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(10, 15, 20, 30).forEach { m ->
-                                PillChoice(label = "${m}m", isSelected = igLimitMin == m, isDark = isDark, modifier = Modifier.weight(1f)) {
-                                    onIgLimitChange(m)
-                                }
-                            }
-                        }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(text = "Batas Akses Aplikasi per Sesi:", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = textPrimary)
+                        Text(text = "$sessionLimitMin Menit", fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AccentAmber)
                     }
-
-                    Divider(color = cardBorder, thickness = 0.8.dp)
-
-                    // Browser Sesi
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(text = "Batas Nonton Browser per Sesi:", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, color = textPrimary)
-                            Text(text = "$browserLimitMin Menit", fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = AccentAmber)
-                        }
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(10, 15, 20, 30).forEach { m ->
-                                PillChoice(label = "${m}m", isSelected = browserLimitMin == m, isDark = isDark, modifier = Modifier.weight(1f)) {
-                                    onBrowserLimitChange(m)
-                                }
+                    Text(
+                        text = "Jika aplikasi target dibuka lebih dari waktu ini berturut-turut, layar blokir estetik akan langsung mencegat.",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 11.sp,
+                        color = textSecondary
+                    )
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(10, 15, 20, 30, 45, 60).forEach { m ->
+                            PillChoice(label = "${m}m", isSelected = sessionLimitMin == m, isDark = isDark, modifier = Modifier.weight(1f)) {
+                                onSessionLimitChange(m)
                             }
                         }
                     }
@@ -730,14 +1196,13 @@ fun TabHabitLockScreen(
             }
         }
 
-        // Setup Google Authenticator (TOTP)
+        // SETUP GOOGLE AUTHENTICATOR (TOTP)
         item {
             SectionHeader(title = "KUNCI GOOGLE AUTHENTICATOR (TOTP)", textSecondary = textSecondary)
         }
 
         item {
             if (isTotpConfigured) {
-                // TAMPILAN JIKA SUDAH TERHUBUNG: Kunci penyiapan otomatis tersembunyi!
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = cardColor,
@@ -812,7 +1277,6 @@ fun TabHabitLockScreen(
                     }
                 }
             } else {
-                // TAMPILAN PENYIAPAN KUNCI RAHASIA (Sebelum diverifikasi)
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = cardColor,
@@ -994,264 +1458,51 @@ fun TabHabitLockScreen(
             }
         )
     }
+
+    // DIALOG PEMILIH APLIKASI (APPBLOCK PICKER)
+    if (showAppPickerDialog) {
+        AppBlockPickerDialog(
+            isDark = isDark,
+            appBlockPackages = appBlockPackages,
+            cardColor = cardColor,
+            cardBorder = cardBorder,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            onTogglePackage = onToggleAppBlockPackage,
+            onDismiss = { showAppPickerDialog = false }
+        )
+    }
 }
 
-// DIALOG INTERAKTIF TANTANGAN NERAKA (MATH + 15s COUNTDOWN + AUTHENTICATOR CODE)
+// DIALOG MODAL PEMILIH APLIKASI UNTUK REM KHILAF (APPBLOCK STYLE)
 @Composable
-fun DarkSoulsUnlockDialog(
-    secretKey: String,
-    onDismiss: () -> Unit,
-    onSuccess: () -> Unit
-) {
-    val context = LocalContext.current
-    var num1 by remember { mutableStateOf(Random.nextInt(25, 75)) }
-    var num2 by remember { mutableStateOf(Random.nextInt(15, 60)) }
-    val correctMath = num1 + num2
-
-    var mathAnswer by remember { mutableStateOf("") }
-    var totpInput by remember { mutableStateOf("") }
-    var isMathSolved by remember { mutableStateOf(false) }
-
-    var difficultySeconds by remember { mutableStateOf(20) }
-    var secondsLeft by remember { mutableStateOf(20) }
-    var isFailed by remember { mutableStateOf(false) }
-
-    // Live sync indicator of Authenticator 30s cycle
-    var authCycleSec by remember { mutableStateOf(TotpHelper.getSecondsRemaining(30)) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            authCycleSec = TotpHelper.getSecondsRemaining(30)
-            delay(500)
-        }
-    }
-
-    LaunchedEffect(isMathSolved) {
-        if (isMathSolved) {
-            secondsLeft = difficultySeconds
-            while (secondsLeft > 0 && !isFailed) {
-                delay(1000)
-                secondsLeft--
-            }
-            if (secondsLeft <= 0) {
-                isFailed = true
-                Toast.makeText(context, "Waktu Habis! Anda gagal menaklukkan tantangan.", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(imageVector = Icons.Default.Whatshot, contentDescription = null, tint = AccentRed, modifier = Modifier.size(24.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "TANTANGAN NERAKA",
-                    fontFamily = RighteousFontFamily,
-                    fontSize = 18.sp,
-                    color = AccentRed
-                )
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (isFailed) {
-                    Text(
-                        text = "❌ GAGAL! Waktu Anda habis atau kode salah. Mode autopilot khilaf Anda berhasil dicegat. Silakan istirahat!",
-                        fontFamily = PoppinsFontFamily,
-                        fontSize = 12.5.sp,
-                        color = AccentRed,
-                        lineHeight = 18.sp
-                    )
-                } else if (!isMathSolved) {
-                    Text(
-                        text = "Ronde 1: Selesaikan soal matematika untuk mengaktifkan otak rasional:",
-                        fontFamily = PoppinsFontFamily,
-                        fontSize = 12.sp,
-                        color = Color.White
-                    )
-
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF1E1E1E),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = "$num1 + $num2 = ?",
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp,
-                            color = AccentAmber,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(12.dp)
-                        )
-                    }
-
-                    OutlinedTextField(
-                        value = mathAnswer,
-                        onValueChange = { mathAnswer = it },
-                        label = { Text("Jawaban Angka") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Text(
-                        text = "Pilih Tingkat Adrenalin Masuk Kode:",
-                        fontFamily = PoppinsFontFamily,
-                        fontSize = 11.sp,
-                        color = Color.LightGray
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf(20 to "Normal (20s)", 10 to "Hard (10s)", 5 to "Neraka (5s)").forEach { (sec, label) ->
-                            val isSel = difficultySeconds == sec
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (isSel) AccentRed else Color(0xFF2A2A2A),
-                                border = BorderStroke(1.dp, if (isSel) AccentRed else Color.Gray),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable { difficultySeconds = sec }
-                            ) {
-                                Text(
-                                    text = label,
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontSize = 10.sp,
-                                    color = if (isSel) Color.White else Color.LightGray,
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.padding(vertical = 6.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Button(
-                        onClick = {
-                            if (mathAnswer.trim() == correctMath.toString()) {
-                                isMathSolved = true
-                                Toast.makeText(context, "Jawaban Benar! Waktu $difficultySeconds detik dimulai!", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(context, "Salah hitung! Coba lagi.", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
-                    ) {
-                        Text("Lanjut ke Ronde Authenticator", fontWeight = FontWeight.Bold, color = Color.Black)
-                    }
-                } else {
-                    // RONDE PANIK: INPUT KODE TOTP DALAM WAKTU SANGAT SEMPIT
-                    Text(
-                        text = "🚨 Ronde 2: Buka Google Authenticator dan masukkan 6 digit kode sekarang!",
-                        fontFamily = PoppinsFontFamily,
-                        fontSize = 12.sp,
-                        color = AccentRed,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    // Live Authenticator cycle indicator
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFF222222),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Siklus Authenticator:", fontFamily = PoppinsFontFamily, fontSize = 11.sp, color = Color.Gray)
-                            Text("$authCycleSec detik lagi", fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = AccentGreen)
-                        }
-                    }
-
-                    // Panic Bar
-                    LinearProgressIndicator(
-                        progress = { (secondsLeft / difficultySeconds.toFloat()).coerceIn(0f, 1f) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(4.dp)),
-                        color = AccentRed,
-                        trackColor = Color.DarkGray
-                    )
-
-                    Text(
-                        text = "⏳ Sisa Waktu Anda: $secondsLeft Detik lagi!",
-                        fontFamily = JetBrainsMonoFontFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = AccentRed,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    OutlinedTextField(
-                        value = totpInput,
-                        onValueChange = { if (it.length <= 6) totpInput = it },
-                        label = { Text("6 Digit Kode Authenticator") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Button(
-                        onClick = {
-                            val isValid = TotpHelper.verifyCode(secretKey, totpInput)
-                            if (isValid) {
-                                onSuccess()
-                            } else {
-                                isFailed = true
-                                Toast.makeText(context, "Kode Authenticator Salah!", Toast.LENGTH_LONG).show()
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
-                    ) {
-                        Text("Validasi & Buka Kunci", fontWeight = FontWeight.Bold, color = Color.White)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Tutup", color = Color.LightGray)
-            }
-        }
-    )
-}
-
-// ================= TAB 3: PENGATURAN & KEKEBALAN HP =================
-@Composable
-fun TabSettingsScreen(
+fun AppBlockPickerDialog(
     isDark: Boolean,
-    candidateApps: List<SelectableApp>,
-    hasAccessPerm: Boolean,
-    hasUsagePerm: Boolean,
-    isBatteryIgnored: Boolean,
+    appBlockPackages: Set<String>,
     cardColor: Color,
     cardBorder: Color,
     textPrimary: Color,
     textSecondary: Color,
-    onToggleApp: (String) -> Unit,
-    onResetDefault: () -> Unit,
-    onClearAll: () -> Unit
+    onTogglePackage: (String) -> Unit,
+    onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    var searchQuery by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
     var filterMode by remember { mutableStateOf("ALL") } // ALL, USER, SYSTEM, SELECTED
+
+    val candidateApps = remember(appBlockPackages) {
+        QuotaManager.getAllCandidateApps(context, appBlockPackages)
+    }
 
     val userAppCount = remember(candidateApps) { candidateApps.count { !it.isSystemApp } }
     val systemAppCount = remember(candidateApps) { candidateApps.count { it.isSystemApp } }
     val selectedCount = remember(candidateApps) { candidateApps.count { it.isSelected } }
 
-    val filteredApps = remember(candidateApps, searchQuery, filterMode) {
+    val filtered = remember(candidateApps, query, filterMode) {
         candidateApps.filter { app ->
-            val matchesSearch = searchQuery.isBlank() ||
-                    app.appName.contains(searchQuery, ignoreCase = true) ||
-                    app.packageName.contains(searchQuery, ignoreCase = true)
+            val matchesQuery = query.isBlank() ||
+                    app.appName.contains(query, ignoreCase = true) ||
+                    app.packageName.contains(query, ignoreCase = true)
 
             val matchesFilter = when (filterMode) {
                 "USER" -> !app.isSystemApp
@@ -1260,89 +1511,70 @@ fun TabSettingsScreen(
                 else -> true
             }
 
-            matchesSearch && matchesFilter
+            matchesQuery && matchesFilter
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        // Section Header
-        item {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SectionHeader(title = "PILIH APLIKASI TARGET VPN BLACKHOLE", textSecondary = textSecondary)
                 Text(
-                    text = "Centang aplikasi yang ingin diputus kuotanya saat kuota habis atau Killswitch aktif. $selectedCount dari ${candidateApps.size} aplikasi dipilih.",
+                    text = "Kelola Aplikasi Terkunci",
+                    fontFamily = PoppinsFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp,
+                    color = textPrimary
+                )
+                Text(
+                    text = "$selectedCount dari ${candidateApps.size} aplikasi dipilih untuk dipantau",
                     fontFamily = PoppinsFontFamily,
                     fontSize = 11.sp,
                     color = textSecondary
                 )
             }
-        }
-
-        // Search Bar & Filter Controls
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 // Search Input
                 OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = {
-                        Text(
-                            text = "Cari nama aplikasi atau package...",
-                            fontFamily = PoppinsFontFamily,
-                            fontSize = 12.sp,
-                            color = textSecondary
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Cari",
-                            tint = textSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    },
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Cari aplikasi...", fontSize = 11.5.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
                     trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Bersihkan",
-                                    tint = textSecondary,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(14.dp))
                             }
                         }
                     },
                     singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AccentGreen,
-                        unfocusedBorderColor = cardBorder,
-                        focusedContainerColor = cardColor,
-                        unfocusedContainerColor = cardColor
-                    ),
+                    shape = RoundedCornerShape(10.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 // Filter Chips
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     listOf(
-                        "ALL" to "Semua (${candidateApps.size})",
-                        "USER" to "User ($userAppCount)",
-                        "SYSTEM" to "Sistem ($systemAppCount)",
-                        "SELECTED" to "Terpilih ($selectedCount)"
+                        "ALL" to "Semua",
+                        "USER" to "User",
+                        "SYSTEM" to "Sistem",
+                        "SELECTED" to "Dipilih"
                     ).forEach { (mode, label) ->
                         val isSel = filterMode == mode
                         Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isSel) AccentGreen else cardColor,
-                            border = BorderStroke(1.dp, if (isSel) AccentGreen else cardBorder),
+                            shape = RoundedCornerShape(6.dp),
+                            color = if (isSel) AccentAmber else cardColor,
+                            border = BorderStroke(1.dp, if (isSel) AccentAmber else cardBorder),
                             modifier = Modifier
                                 .weight(1f)
                                 .clickable { filterMode = mode }
@@ -1354,141 +1586,137 @@ fun TabSettingsScreen(
                                 fontSize = 9.sp,
                                 color = if (isSel) Color.Black else textPrimary,
                                 textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp)
+                                modifier = Modifier.padding(vertical = 4.dp)
                             )
                         }
                     }
                 }
 
-                // Batch Action Buttons
+                // Batch Presets
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onResetDefault,
+                        onClick = {
+                            // Reset to default AppBlock (Sosmed, browser, video)
+                            QuotaManager.setAppBlockPackages(context, QuotaManager.DEFAULT_APPBLOCK_APPS)
+                        },
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "Reset Default (Sosmed & Web)",
-                            fontFamily = PoppinsFontFamily,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = textPrimary
-                        )
-                    }
-
-                    OutlinedButton(
-                        onClick = onClearAll,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.weight(1f),
-                        contentPadding = PaddingValues(vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "Batal Pilih Semua",
-                            fontFamily = PoppinsFontFamily,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = AccentRed
-                        )
-                    }
-                }
-            }
-        }
-
-        // List of Apps
-        if (filteredApps.isEmpty()) {
-            item {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = cardColor,
-                    border = BorderStroke(1.dp, cardBorder),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = "Tidak ada aplikasi yang cocok dengan pencarian / filter ini.",
-                        fontFamily = PoppinsFontFamily,
-                        fontSize = 11.5.sp,
-                        color = textSecondary,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(20.dp)
-                    )
-                }
-            }
-        } else {
-            items(filteredApps.size) { idx ->
-                val app = filteredApps[idx]
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = cardColor,
-                    border = BorderStroke(1.dp, if (app.isSelected) AccentGreen.copy(alpha = 0.5f) else cardBorder),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onToggleApp(app.packageName) }
-                ) {
-                    Row(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .weight(1f)
+                            .height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.weight(1f),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        Text("Sosmed & Video", fontSize = 10.sp, color = textPrimary, maxLines = 1)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            QuotaManager.setAppBlockPackages(context, emptySet())
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp),
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                    ) {
+                        Text("Batal Semua", fontSize = 10.sp, color = AccentRed, maxLines = 1)
+                    }
+                }
+
+                Divider(color = cardBorder, thickness = 0.8.dp)
+
+                // List
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(filtered.size) { idx ->
+                        val app = filtered[idx]
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (app.isSelected) AccentAmber.copy(alpha = 0.1f) else cardColor,
+                            border = BorderStroke(1.dp, if (app.isSelected) AccentAmber.copy(alpha = 0.4f) else cardBorder),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onTogglePackage(app.packageName) }
                         ) {
-                            Checkbox(
-                                checked = app.isSelected,
-                                onCheckedChange = { onToggleApp(app.packageName) },
-                                colors = CheckboxDefaults.colors(checkedColor = AccentGreen)
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = app.isSelected,
+                                    onCheckedChange = { onTogglePackage(app.packageName) },
+                                    colors = CheckboxDefaults.colors(checkedColor = AccentAmber)
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = app.appName,
                                         fontFamily = PoppinsFontFamily,
                                         fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.sp,
+                                        fontSize = 11.5.sp,
                                         color = textPrimary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = if (app.isSystemApp) Color.Gray.copy(alpha = 0.2f) else AccentGreen.copy(alpha = 0.15f)
-                                    ) {
-                                        Text(
-                                            text = if (app.isSystemApp) "Sistem" else "User",
-                                            fontFamily = JetBrainsMonoFontFamily,
-                                            fontSize = 8.5.sp,
-                                            color = if (app.isSystemApp) textSecondary else AccentGreen,
-                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                        )
-                                    }
+                                    Text(
+                                        text = app.packageName,
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = 8.5.sp,
+                                        color = textSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
                                 }
-                                Text(
-                                    text = app.packageName,
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontSize = 9.sp,
-                                    color = textSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
                             }
                         }
                     }
                 }
             }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
+            ) {
+                Text("Selesai", fontWeight = FontWeight.Bold, color = Color.Black)
+            }
         }
+    )
+}
 
-        // Status Izin & Anti-Lepas
+// ================= TAB 4: PENGATURAN & KEKEBALAN SISTEM HP =================
+@Composable
+fun TabSettingsScreen(
+    isDark: Boolean,
+    hasAccessPerm: Boolean,
+    hasUsagePerm: Boolean,
+    isBatteryIgnored: Boolean,
+    cardColor: Color,
+    cardBorder: Color,
+    textPrimary: Color,
+    textSecondary: Color
+) {
+    val context = LocalContext.current
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         item {
-            SectionHeader(title = "KEKEBALAN AKSEBILITAS (ANTI-LEPAS)", textSecondary = textSecondary)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SectionHeader(title = "KEKEBALAN AKSEBILITAS (ANTI-LEPAS)", textSecondary = textSecondary)
+                Text(
+                    text = "Konfigurasi izin sistem Android agar CiroKuota kebal dari pembunuhan proses latar belakang oleh OS (MIUI, ColorOS, OneUI).",
+                    fontFamily = PoppinsFontFamily,
+                    fontSize = 11.sp,
+                    color = textSecondary
+                )
+            }
         }
 
         item {
@@ -1496,7 +1724,7 @@ fun TabSettingsScreen(
                 // Izin Bebas Baterai (Unrestricted)
                 PermissionStatusCard(
                     title = "Bebas dari Hemat Baterai (Anti-Kill)",
-                    desc = "Wajib agar HP tidak mematikan Aksesibilitas secara diam-diam",
+                    desc = "Wajib aktif agar HP tidak mematikan Aksesibilitas secara diam-diam",
                     isGranted = isBatteryIgnored,
                     cardBg = cardColor,
                     cardBorder = cardBorder,
@@ -1515,7 +1743,7 @@ fun TabSettingsScreen(
                 // Izin Aksesibilitas
                 PermissionStatusCard(
                     title = "Layanan Aksesibilitas CiroKuota",
-                    desc = "Wajib aktif untuk mendeteksi pembukaan Instagram & Browser",
+                    desc = "Wajib aktif untuk mendeteksi pembukaan aplikasi target & blokir situs terlarang",
                     isGranted = hasAccessPerm,
                     cardBg = cardColor,
                     cardBorder = cardBorder,
@@ -1530,7 +1758,7 @@ fun TabSettingsScreen(
                 // Izin Usage Stats
                 PermissionStatusCard(
                     title = "Akses Penggunaan Kuota (Usage Stats)",
-                    desc = "Diperlukan untuk membaca MB kuota per aplikasi",
+                    desc = "Diperlukan untuk membaca MB kuota per aplikasi secara akurat",
                     isGranted = hasUsagePerm,
                     cardBg = cardColor,
                     cardBorder = cardBorder,
@@ -1545,6 +1773,10 @@ fun TabSettingsScreen(
         }
 
         // Panduan Kunci di Recent Apps (Gembok)
+        item {
+            SectionHeader(title = "PANDUAN GEMBOK RECENT APPS", textSecondary = textSecondary)
+        }
+
         item {
             Surface(
                 shape = RoundedCornerShape(14.dp),

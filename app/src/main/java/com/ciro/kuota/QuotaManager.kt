@@ -48,6 +48,7 @@ object QuotaManager {
     private const val KEY_KILLSWITCH = "killswitch_active"
     private const val KEY_VPN_ACTIVE = "vpn_firewall_active"
     private const val KEY_FAMILY_DNS = "family_dns_active"
+    private const val KEY_ADULT_FILTER = "adult_filter_active"
     private const val KEY_APP_LOCK = "app_lock_active"
     private const val KEY_AUTO_CUTOFF = "auto_cutoff_active"
     private const val KEY_IG_LIMIT_MIN = "ig_session_limit_minutes"
@@ -57,6 +58,84 @@ object QuotaManager {
     private const val KEY_DARK_MODE = "is_dark_mode"
     private const val KEY_LAST_DATE = "last_tracked_date"
     private const val KEY_BLACKHOLE_APPS = "blackhole_packages"
+
+    // Daftar Domain Dewasa / Pornografi (Termasuk missav.ai dan mirror/variannya)
+    val ADULT_DOMAINS = setOf(
+        "missav.ai", "missav.com", "missav.ws", "missav.net", "missav.org", "missav.live", "missav.tv",
+        "pornhub.com", "xvideos.com", "xnxx.com", "rule34.xxx", "onlyfans.com",
+        "javlibrary.com", "javdb.com", "javbus.com", "spankbang.com", "redtube.com",
+        "youporn.com", "eporner.com", "hqporner.com", "beeg.com", "tube8.com",
+        "chaturbate.com", "stripchat.com", "livejasmin.com", "bonga.com", "cam4.com",
+        "camsoda.com", "xhamster.com", "brazzers.com", "hentaihaven.xxx", "nhentai.net",
+        "hanime.tv", "fapello.com", "ero-video.net", "jable.tv", "tktube.com", "subjav.com", "supjav.com"
+    )
+
+    // Kata Kunci Situs Dewasa untuk Deteksi Cepat
+    val ADULT_KEYWORDS = listOf(
+        "missav",
+        "pornhub",
+        "xvideos",
+        "xnxx",
+        "rule34",
+        "xhamster",
+        "spankbang",
+        "hentai",
+        "javdb",
+        "javbus",
+        "javlibrary",
+        "chaturbate",
+        "stripchat"
+    )
+
+    // Paket-paket browser populer
+    val BROWSER_PACKAGES = setOf(
+        "com.android.chrome",
+        "com.chrome.beta",
+        "com.chrome.dev",
+        "com.chrome.canary",
+        "org.mozilla.firefox",
+        "org.mozilla.firefox_beta",
+        "com.sec.android.app.sbrowser",
+        "com.microsoft.emmx",
+        "com.opera.browser",
+        "com.opera.mini.native",
+        "com.opera.gx",
+        "com.brave.browser",
+        "com.duckduckgo.mobile.android",
+        "com.kiwibrowser.browser",
+        "com.UCMobile.intl",
+        "com.mi.globalbrowser"
+    )
+
+    fun isBrowserPackage(pkg: String): Boolean {
+        return BROWSER_PACKAGES.contains(pkg) || pkg.contains("browser")
+    }
+
+    fun isAdultDomain(text: String): Boolean {
+        val lower = text.lowercase(Locale.US).trim()
+        if (lower.isEmpty()) return false
+
+        // Check if any known adult domain is part of or equal to text
+        for (domain in ADULT_DOMAINS) {
+            if (lower == domain || lower.endsWith(".$domain") || lower.contains("/$domain") || lower.contains(domain)) {
+                return true
+            }
+        }
+
+        // TLD match
+        if (lower.endsWith(".xxx") || lower.endsWith(".porn") || lower.endsWith(".adult")) {
+            return true
+        }
+
+        // Keyword match
+        for (kw in ADULT_KEYWORDS) {
+            if (lower.contains(kw)) {
+                return true
+            }
+        }
+
+        return false
+    }
 
     val DEFAULT_BLACKHOLE_APPS = setOf(
         "com.instagram.android",
@@ -78,6 +157,9 @@ object QuotaManager {
 
     fun isFamilyDnsActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_FAMILY_DNS, true)
     fun setFamilyDnsActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_FAMILY_DNS, active).apply()
+
+    fun isAdultFilterActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_ADULT_FILTER, true)
+    fun setAdultFilterActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_ADULT_FILTER, active).apply()
 
     fun isAppLockActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_APP_LOCK, true)
     fun setAppLockActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_APP_LOCK, active).apply()
@@ -139,6 +221,63 @@ object QuotaManager {
         return getBlackholePackages(context).contains(packageName)
     }
 
+    // AppBlock (Rem Khilaf) Settings & Targets
+    private const val KEY_APPBLOCK_APPS = "appblock_packages"
+    private const val KEY_APPBLOCK_LIMIT_MIN = "appblock_session_limit_minutes"
+
+    val DEFAULT_APPBLOCK_APPS = setOf(
+        "com.instagram.android",
+        "com.instagram.lite",
+        "com.google.android.youtube",
+        "com.zhiliaoapp.musically",
+        "com.ss.android.ugc.trill",
+        "com.android.chrome"
+    )
+
+    fun getAppBlockPackages(context: Context): Set<String> {
+        return getPrefs(context).getStringSet(KEY_APPBLOCK_APPS, DEFAULT_APPBLOCK_APPS) ?: DEFAULT_APPBLOCK_APPS
+    }
+
+    fun setAppBlockPackages(context: Context, pkgs: Set<String>) {
+        getPrefs(context).edit().putStringSet(KEY_APPBLOCK_APPS, pkgs).apply()
+    }
+
+    fun toggleAppBlockPackage(context: Context, pkg: String): Boolean {
+        val current = getAppBlockPackages(context).toMutableSet()
+        val isNowSelected = if (current.contains(pkg)) {
+            current.remove(pkg)
+            false
+        } else {
+            current.add(pkg)
+            true
+        }
+        setAppBlockPackages(context, current)
+        return isNowSelected
+    }
+
+    fun getAppBlockSessionLimitMinutes(context: Context): Int = getPrefs(context).getInt(KEY_APPBLOCK_LIMIT_MIN, 20)
+    fun setAppBlockSessionLimitMinutes(context: Context, min: Int) = getPrefs(context).edit().putInt(KEY_APPBLOCK_LIMIT_MIN, min).apply()
+
+    fun isAppBlockMonitored(context: Context, packageName: String): Boolean {
+        return getAppBlockPackages(context).contains(packageName) || isInstagram(packageName) || isBrowser(packageName)
+    }
+
+    fun getAppDisplayName(context: Context, pkg: String): String {
+        return try {
+            val pm = context.packageManager
+            val ai = pm.getApplicationInfo(pkg, 0)
+            pm.getApplicationLabel(ai).toString()
+        } catch (_: Exception) {
+            when {
+                isInstagram(pkg) -> "Instagram"
+                isBrowser(pkg) -> "Browser Web"
+                pkg.contains("youtube") -> "YouTube"
+                pkg.contains("tiktok") || pkg.contains("musically") -> "TikTok"
+                else -> pkg
+            }
+        }
+    }
+
     fun isInstagram(packageName: String): Boolean = packageName.contains("instagram")
     fun isBrowser(packageName: String): Boolean = packageName.contains("chrome") ||
             packageName.contains("firefox") ||
@@ -147,9 +286,8 @@ object QuotaManager {
             packageName.contains("duckduckgo") ||
             packageName.contains("emmx")
 
-    fun getAllCandidateApps(context: Context): List<SelectableApp> {
+    fun getAllCandidateApps(context: Context, selectedPackages: Set<String> = getBlackholePackages(context)): List<SelectableApp> {
         val pm = context.packageManager
-        val selected = getBlackholePackages(context)
         val installedApps = try {
             pm.getInstalledApplications(PackageManager.GET_META_DATA)
         } catch (_: Exception) {
@@ -159,7 +297,7 @@ object QuotaManager {
         val result = mutableListOf<SelectableApp>()
         for (appInfo in installedApps) {
             val pkg = appInfo.packageName
-            if (pkg == context.packageName) continue // Jangan blackhole CiroKuota sendiri
+            if (pkg == context.packageName) continue // Jangan masukkan CiroKuota sendiri
 
             val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             val label = try {
@@ -184,7 +322,7 @@ object QuotaManager {
                     category = category,
                     isInstalled = true,
                     isSystemApp = isSystem,
-                    isSelected = selected.contains(pkg)
+                    isSelected = selectedPackages.contains(pkg)
                 )
             )
         }
@@ -203,6 +341,14 @@ object QuotaManager {
 
     fun resetToDefaultApps(context: Context) {
         setBlackholePackages(context, DEFAULT_BLACKHOLE_APPS)
+    }
+
+    fun resetAppBlockToDefault(context: Context) {
+        setAppBlockPackages(context, DEFAULT_APPBLOCK_APPS)
+    }
+
+    fun clearAllAppBlock(context: Context) {
+        setAppBlockPackages(context, emptySet())
     }
 
     fun isBatteryOptimizationIgnored(context: Context): Boolean {

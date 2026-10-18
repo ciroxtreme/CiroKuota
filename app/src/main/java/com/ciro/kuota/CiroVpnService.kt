@@ -17,6 +17,7 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.nio.ByteBuffer
+import java.util.Locale
 
 class CiroVpnService : VpnService() {
 
@@ -206,6 +207,13 @@ class CiroVpnService : VpnService() {
             if (udpLen < 8 || ihl + udpLen > length) return
             val dnsPayload = packet.copyOfRange(ihl + 8, ihl + udpLen)
 
+            // Pemeriksaan Pemblokir Domain Dewasa / Pornografi (MissAV, dll)
+            val queriedDomain = extractDnsDomain(dnsPayload)
+            if (queriedDomain != null && QuotaManager.isAdultFilterActive(applicationContext) && QuotaManager.isAdultDomain(queriedDomain)) {
+                sendDnsBlockedResponse(dnsPayload, srcIp, dstIp, srcPort, outputStream)
+                return
+            }
+
             val useFamilyDns = QuotaManager.isFamilyDnsActive(applicationContext)
             val upstreamDnsIp = if (useFamilyDns) "1.1.1.3" else "1.1.1.1"
 
@@ -260,6 +268,87 @@ class CiroVpnService : VpnService() {
 
             synchronized(outputStream) {
                 outputStream.write(respBuf)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun extractDnsDomain(payload: ByteArray): String? {
+        if (payload.size < 13) return null
+        var pos = 12
+        val sb = StringBuilder()
+        while (pos < payload.size) {
+            val len = payload[pos].toInt() and 0xFF
+            if (len == 0) break
+            if ((len and 0xC0) != 0) break // Compression pointer
+            pos++
+            if (pos + len > payload.size) return null
+            if (sb.isNotEmpty()) sb.append(".")
+            for (i in 0 until len) {
+                sb.append(payload[pos + i].toInt().toChar())
+            }
+            pos += len
+        }
+        return sb.toString().lowercase(Locale.US)
+    }
+
+    private fun sendDnsBlockedResponse(
+        dnsPayload: ByteArray,
+        srcIp: ByteArray,
+        dstIp: ByteArray,
+        srcPort: Int,
+        outputStream: FileOutputStream
+    ) {
+        try {
+            if (dnsPayload.size < 12) return
+
+            // DNS NXDOMAIN response
+            val dnsResp = dnsPayload.clone()
+            dnsResp[2] = 0x81.toByte() // QR=1, Opcode=0, AA=0, TC=0, RD=1
+            dnsResp[3] = 0x83.toByte() // RA=1, Z=0, RCODE=3 (NXDOMAIN)
+            // ANCOUNT = 0, NSCOUNT = 0, ARCOUNT = 0
+            dnsResp[6] = 0; dnsResp[7] = 0
+            dnsResp[8] = 0; dnsResp[9] = 0
+            dnsResp[10] = 0; dnsResp[11] = 0
+
+            val dnsRespLen = dnsResp.size
+            val totalLen = 20 + 8 + dnsRespLen
+            val respBuf = ByteArray(totalLen)
+
+            // IPv4 Header
+            respBuf[0] = 0x45
+            respBuf[1] = 0x00
+            respBuf[2] = ((totalLen shr 8) and 0xFF).toByte()
+            respBuf[3] = (totalLen and 0xFF).toByte()
+            respBuf[4] = 0x12
+            respBuf[5] = 0x34
+            respBuf[6] = 0x40 // Don't Fragment
+            respBuf[7] = 0x00
+            respBuf[8] = 64
+            respBuf[9] = 17 // UDP
+            System.arraycopy(dstIp, 0, respBuf, 12, 4) // Source = DNS Server
+            System.arraycopy(srcIp, 0, respBuf, 16, 4) // Dest = Client
+
+            val ipCsum = calculateIpChecksum(respBuf, 0, 20)
+            respBuf[10] = ((ipCsum shr 8) and 0xFF).toByte()
+            respBuf[11] = (ipCsum and 0xFF).toByte()
+
+            // UDP Header
+            respBuf[20] = 0x00
+            respBuf[21] = 53 // Source Port 53
+            respBuf[22] = ((srcPort shr 8) and 0xFF).toByte()
+            respBuf[23] = (srcPort and 0xFF).toByte()
+            val udpRespLen = 8 + dnsRespLen
+            respBuf[24] = ((udpRespLen shr 8) and 0xFF).toByte()
+            respBuf[25] = (udpRespLen and 0xFF).toByte()
+            respBuf[26] = 0
+            respBuf[27] = 0
+
+            // DNS Payload (NXDOMAIN)
+            System.arraycopy(dnsResp, 0, respBuf, 28, dnsRespLen)
+
+            synchronized(outputStream) {
+                outputStream.write(respBuf)
+                outputStream.flush()
             }
         } catch (_: Exception) {}
     }
