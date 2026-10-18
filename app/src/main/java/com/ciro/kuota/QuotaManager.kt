@@ -300,11 +300,14 @@ object QuotaManager {
     private const val KEY_TIME_END_HOUR = "time_end_hour"
     private const val KEY_TIME_END_MIN = "time_end_min"
 
-    fun isCondByKuotaActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_KUOTA, true)
+    fun isCondByKuotaActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_KUOTA, false)
     fun setCondByKuotaActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_KUOTA, active).apply()
+
     // Kuota per App (Budget per individual target app)
     private const val KEY_COND_APP_KUOTA = "cond_by_app_kuota"
     private const val KEY_APP_KUOTA_BUDGET_MB = "app_quota_budget_mb"
+    private const val KEY_APP_KUOTA_BASE_PREFIX = "app_kuota_base_"
+    private const val KEY_APP_KUOTA_BASE_DATE = "app_kuota_base_date"
 
     fun isCondByAppQuotaActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_APP_KUOTA, true)
     fun setCondByAppQuotaActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_APP_KUOTA, active).apply()
@@ -312,8 +315,10 @@ object QuotaManager {
     fun getAppQuotaBudgetMb(context: Context): Float = getPrefs(context).getFloat(KEY_APP_KUOTA_BUDGET_MB, 500f)
     fun setAppQuotaBudgetMb(context: Context, mb: Float) = getPrefs(context).edit().putFloat(KEY_APP_KUOTA_BUDGET_MB, mb).apply()
 
-    fun getAppUsageTodayBytes(context: Context, packageName: String): Long {
-        return try {
+    // Mengambil akumulasi trafik raw aplikasi hari ini (Wi-Fi + Seluler/Mobile Data)
+    fun getRawAppUsageBytes(context: Context, packageName: String): Long {
+        var totalBytes = 0L
+        try {
             val pm = context.packageManager
             val appInfo = pm.getApplicationInfo(packageName, 0)
             val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
@@ -321,31 +326,118 @@ object QuotaManager {
             if (hasPerm && nsm != null) {
                 val startTime = getMidnightTimestamp()
                 val endTime = System.currentTimeMillis()
-                val stats: NetworkStats = nsm.queryDetailsForUid(
-                    ConnectivityManager.TYPE_WIFI,
-                    null,
-                    startTime,
-                    endTime,
-                    appInfo.uid
-                )
-                var bytes = 0L
-                val bucket = NetworkStats.Bucket()
-                while (stats.hasNextBucket()) {
-                    stats.getNextBucket(bucket)
-                    bytes += bucket.rxBytes + bucket.txBytes
-                }
-                stats.close()
-                bytes
-            } else {
-                0L
+
+                // 1. Wi-Fi
+                try {
+                    val wifiStats = nsm.queryDetailsForUid(
+                        ConnectivityManager.TYPE_WIFI,
+                        null,
+                        startTime,
+                        endTime,
+                        appInfo.uid
+                    )
+                    val bucket = NetworkStats.Bucket()
+                    while (wifiStats.hasNextBucket()) {
+                        wifiStats.getNextBucket(bucket)
+                        totalBytes += bucket.rxBytes + bucket.txBytes
+                    }
+                    wifiStats.close()
+                } catch (_: Exception) {}
+
+                // 2. Mobile / Seluler
+                try {
+                    val mobileStats = nsm.queryDetailsForUid(
+                        ConnectivityManager.TYPE_MOBILE,
+                        null,
+                        startTime,
+                        endTime,
+                        appInfo.uid
+                    )
+                    val bucket = NetworkStats.Bucket()
+                    while (mobileStats.hasNextBucket()) {
+                        mobileStats.getNextBucket(bucket)
+                        totalBytes += bucket.rxBytes + bucket.txBytes
+                    }
+                    mobileStats.close()
+                } catch (_: Exception) {}
             }
-        } catch (_: Exception) {
-            0L
+        } catch (_: Exception) {}
+
+        // Fallback ke TrafficStats jika NetworkStatsManager bernilai 0
+        if (totalBytes <= 0L) {
+            try {
+                val pm = context.packageManager
+                val appInfo = pm.getApplicationInfo(packageName, 0)
+                val rx = TrafficStats.getUidRxBytes(appInfo.uid)
+                val tx = TrafficStats.getUidTxBytes(appInfo.uid)
+                if (rx > 0 || tx > 0) {
+                    totalBytes = rx.coerceAtLeast(0L) + tx.coerceAtLeast(0L)
+                }
+            } catch (_: Exception) {}
         }
+
+        return totalBytes
+    }
+
+    // Reset baseline kuota per aplikasi agar hitungan kuota aplikasi dihitung mulai 0 MB dari titik ini
+    fun resetAppQuotaBaseline(context: Context, packageName: String) {
+        val raw = getRawAppUsageBytes(context, packageName)
+        getPrefs(context).edit().putLong("${KEY_APP_KUOTA_BASE_PREFIX}$packageName", raw).apply()
+    }
+
+    // Reset baseline seluruh aplikasi yang diproteksi
+    fun resetAllAppQuotaBaselines(context: Context) {
+        val prefs = getPrefs(context)
+        val editor = prefs.edit()
+        val todayStr = getTodayDateString()
+        editor.putString(KEY_APP_KUOTA_BASE_DATE, todayStr)
+
+        val candidatePackages = getAppBlockPackages(context) + getBlackholePackages(context) + listOf("com.android.chrome")
+        for (pkg in candidatePackages) {
+            val raw = getRawAppUsageBytes(context, pkg)
+            editor.putLong("${KEY_APP_KUOTA_BASE_PREFIX}$pkg", raw)
+        }
+        editor.apply()
+    }
+
+    // Menghitung pemakaian kuota aplikasi yang dimonitor (Delta pemakaian sejak disetel/direset, bukan total bawaan sistem)
+    fun getAppMonitoredUsageBytes(context: Context, packageName: String): Long {
+        val prefs = getPrefs(context)
+        val todayStr = getTodayDateString()
+        val lastDate = prefs.getString(KEY_APP_KUOTA_BASE_DATE, "")
+
+        val raw = getRawAppUsageBytes(context, packageName)
+        val key = "${KEY_APP_KUOTA_BASE_PREFIX}$packageName"
+
+        // Jika hari berganti atau belum ada baseline: buat baseline awal sama dengan raw saat ini
+        if (lastDate != todayStr || !prefs.contains(key)) {
+            prefs.edit()
+                .putString(KEY_APP_KUOTA_BASE_DATE, todayStr)
+                .putLong(key, raw)
+                .apply()
+            return 0L
+        }
+
+        val base = prefs.getLong(key, raw)
+        if (raw < base) {
+            // Misal HP restart sehingga counter reset
+            prefs.edit().putLong(key, raw).apply()
+            return 0L
+        }
+
+        return raw - base
+    }
+
+    fun getAppMonitoredUsageMb(context: Context, packageName: String): Float {
+        return getAppMonitoredUsageBytes(context, packageName).toFloat() / (1024f * 1024f)
+    }
+
+    fun getAppUsageTodayBytes(context: Context, packageName: String): Long {
+        return getAppMonitoredUsageBytes(context, packageName)
     }
 
     fun getAppUsageTodayMb(context: Context, packageName: String): Float {
-        return getAppUsageTodayBytes(context, packageName).toFloat() / (1024f * 1024f)
+        return getAppMonitoredUsageMb(context, packageName)
     }
 
     fun isCondByDurationActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_DURATION, true)
@@ -561,32 +653,44 @@ object QuotaManager {
     }
 
     fun getWifiUsageToday(context: Context): Long {
-        if (!hasUsageStatsPermission(context)) {
-            val rx = TrafficStats.getTotalRxBytes()
-            val tx = TrafficStats.getTotalTxBytes()
-            return if (rx > 0 && tx > 0) (rx + tx) else 0L
+        if (hasUsageStatsPermission(context)) {
+            try {
+                val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
+                if (nsm != null) {
+                    val startTime = getMidnightTimestamp()
+                    val endTime = System.currentTimeMillis()
+                    val bucket = nsm.querySummaryForDevice(
+                        ConnectivityManager.TYPE_WIFI,
+                        null,
+                        startTime,
+                        endTime
+                    )
+                    return bucket.rxBytes + bucket.txBytes
+                }
+            } catch (_: Exception) {}
         }
 
-        return try {
-            val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
-            if (nsm != null) {
-                val startTime = getMidnightTimestamp()
-                val endTime = System.currentTimeMillis()
-                val bucket = nsm.querySummaryForDevice(
-                    ConnectivityManager.TYPE_WIFI,
-                    null,
-                    startTime,
-                    endTime
-                )
-                bucket.rxBytes + bucket.txBytes
-            } else {
-                0L
-            }
-        } catch (_: Exception) {
-            val rx = TrafficStats.getTotalRxBytes()
-            val tx = TrafficStats.getTotalTxBytes()
-            if (rx > 0 && tx > 0) (rx + tx) else 0L
+        // Fallback TrafficStats dengan baseline harian agar tidak mengambil hitungan GB sejak HP menyala (boot)
+        val currentTotal = TrafficStats.getTotalRxBytes() + TrafficStats.getTotalTxBytes()
+        if (currentTotal <= 0) return 0L
+
+        val prefs = getPrefs(context)
+        val todayStr = getTodayDateString()
+        val lastDate = prefs.getString("total_wifi_traffic_date", "")
+        val key = "total_wifi_traffic_base"
+
+        if (lastDate != todayStr || !prefs.contains(key)) {
+            prefs.edit().putString("total_wifi_traffic_date", todayStr).putLong(key, currentTotal).apply()
+            return 0L
         }
+
+        val base = prefs.getLong(key, currentTotal)
+        if (currentTotal < base) {
+            prefs.edit().putLong(key, currentTotal).apply()
+            return 0L
+        }
+
+        return currentTotal - base
     }
 
     fun getQuotaStatus(context: Context): QuotaStatus {
@@ -611,41 +715,19 @@ object QuotaManager {
         val pm = context.packageManager
         val list = mutableListOf<AppDataUsage>()
 
-        val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
-        val hasPerm = hasUsageStatsPermission(context)
-        val startTime = getMidnightTimestamp()
-        val endTime = System.currentTimeMillis()
-
-        val candidatePackages = getBlackholePackages(context) + listOf(
+        val candidatePackages = (getBlackholePackages(context) + getAppBlockPackages(context) + listOf(
             "com.google.android.youtube",
             "com.zhiliaoapp.musically",
             "com.whatsapp",
-            "org.telegram.messenger"
-        )
+            "org.telegram.messenger",
+            "com.android.chrome"
+        )).distinct()
 
         for (pkg in candidatePackages) {
             try {
                 val appInfo = pm.getApplicationInfo(pkg, 0)
                 val label = pm.getApplicationLabel(appInfo).toString()
-                var bytes = 0L
-
-                if (hasPerm && nsm != null) {
-                    try {
-                        val stats: NetworkStats = nsm.queryDetailsForUid(
-                            ConnectivityManager.TYPE_WIFI,
-                            null,
-                            startTime,
-                            endTime,
-                            appInfo.uid
-                        )
-                        val bucket = NetworkStats.Bucket()
-                        while (stats.hasNextBucket()) {
-                            stats.getNextBucket(bucket)
-                            bytes += bucket.rxBytes + bucket.txBytes
-                        }
-                        stats.close()
-                    } catch (_: Exception) {}
-                }
+                val bytes = getRawAppUsageBytes(context, pkg)
 
                 val category = when {
                     isInstagram(pkg) -> "instagram"
@@ -660,7 +742,7 @@ object QuotaManager {
                         packageName = pkg,
                         appName = label,
                         bytesUsed = bytes,
-                        isMonitored = isTargetMonitored(context, pkg),
+                        isMonitored = isTargetMonitored(context, pkg) || isAppBlockMonitored(context, pkg),
                         iconCategory = category
                     )
                 )

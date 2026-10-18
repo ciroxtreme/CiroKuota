@@ -369,10 +369,20 @@ fun CiroKuotaMainScreen(
                         onToggleCondByAppQuota = {
                             isCondByAppQuota = !isCondByAppQuota
                             QuotaManager.setCondByAppQuotaActive(context, isCondByAppQuota)
+                            if (isCondByAppQuota) {
+                                QuotaManager.resetAllAppQuotaBaselines(context)
+                                Toast.makeText(context, "By Kuota Aplikasi aktif! Kuota dihitung mulai dari 0 MB.", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         onAppQuotaBudgetChange = { mb ->
                             appQuotaBudgetMb = mb
                             QuotaManager.setAppQuotaBudgetMb(context, mb)
+                            QuotaManager.resetAllAppQuotaBaselines(context)
+                            Toast.makeText(context, "Batas kuota aplikasi diubah ke ${if (mb >= 1024f) "1 GB" else "${mb.toInt()} MB"} & direset ke 0 MB!", Toast.LENGTH_SHORT).show()
+                        },
+                        onResetAppQuotaUsage = {
+                            QuotaManager.resetAllAppQuotaBaselines(context)
+                            Toast.makeText(context, "🔄 Kuota aplikasi berhasil direset ke 0 MB!", Toast.LENGTH_SHORT).show()
                         },
                         onToggleCondByDuration = {
                             isCondByDuration = !isCondByDuration
@@ -796,6 +806,7 @@ fun TabSchedulesScreen(
     onToggleCondByKuota: () -> Unit,
     onToggleCondByAppQuota: () -> Unit,
     onAppQuotaBudgetChange: (Float) -> Unit,
+    onResetAppQuotaUsage: () -> Unit,
     onToggleCondByDuration: () -> Unit,
     onToggleCondByTime: () -> Unit,
     onToggleCondByLaunch: () -> Unit,
@@ -973,7 +984,7 @@ fun TabSchedulesScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     QuickSwitchCard(
                         title = "📊 By Kuota per Aplikasi",
-                        subtitle = "Blokir aplikasi target jika pemakaian individunya mencapai batas (${appQuotaBudgetMb.toInt()} MB/hari)",
+                        subtitle = "Batas ${appQuotaBudgetMb.toInt()} MB per aplikasi sejak disetel (dihitung mulai 0 MB, bukan bawaan sistem)",
                         icon = Icons.Default.DataSaverOn,
                         isActive = isCondByAppQuota,
                         activeColor = AccentAmber,
@@ -999,6 +1010,31 @@ fun TabSchedulesScreen(
                                 ) {
                                     onAppQuotaBudgetChange(mb)
                                 }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            OutlinedButton(
+                                onClick = onResetAppQuotaUsage,
+                                shape = RoundedCornerShape(10.dp),
+                                border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.5f)),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = AccentAmber
+                                ),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Reset Kuota ke 0 MB",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp
+                                )
                             }
                         }
                     }

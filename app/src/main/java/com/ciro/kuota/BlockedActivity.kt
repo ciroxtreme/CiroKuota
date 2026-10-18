@@ -225,8 +225,8 @@ fun BlockedScreen(
                     onClick = onStartChallenge,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
-                    shape = RoundedCornerShape(24.dp),
+                        .height(50.dp),
+                    shape = RoundedCornerShape(25.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = AccentRed.copy(alpha = 0.2f),
                         contentColor = AccentRed
@@ -236,10 +236,12 @@ fun BlockedScreen(
                     Icon(imageVector = Icons.Default.Whatshot, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Buka Darurat 15m (Tantangan Neraka)",
+                        text = "Buka Darurat 15 Menit",
                         fontFamily = PoppinsFontFamily,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 12.5.sp
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 }
 

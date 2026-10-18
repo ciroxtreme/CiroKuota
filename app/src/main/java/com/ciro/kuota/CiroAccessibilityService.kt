@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.util.Locale
 import kotlinx.coroutines.*
 
 class CiroAccessibilityService : AccessibilityService() {
@@ -164,7 +165,7 @@ class CiroAccessibilityService : AccessibilityService() {
 
             val isCondByAppQuota = QuotaManager.isCondByAppQuotaActive(applicationContext)
             val appBudgetMb = QuotaManager.getAppQuotaBudgetMb(applicationContext)
-            val appUsageMb = if (isCondByAppQuota) QuotaManager.getAppUsageTodayMb(applicationContext, pkg) else 0f
+            val appUsageMb = if (isCondByAppQuota) QuotaManager.getAppMonitoredUsageMb(applicationContext, pkg) else 0f
             val isAppQuotaExceeded = isCondByAppQuota && appUsageMb >= appBudgetMb
 
             when {
@@ -176,10 +177,10 @@ class CiroAccessibilityService : AccessibilityService() {
                     reason = "🔒 Kunci Ketat (Strict Mode) aktif! $appName terkunci selama $remainingMin menit lagi."
                 }
                 isCondByAppQuota && isAppQuotaExceeded -> {
-                    reason = "📊 By Kuota App: Pemakaian $appName hari ini (${appUsageMb.toInt()} MB) melebihi batas per aplikasi (${appBudgetMb.toInt()} MB)!"
+                    reason = "📊 By Kuota App: Pemakaian $appName (${String.format(Locale.US, "%.1f", appUsageMb)} MB) telah mencapai batas budget (${appBudgetMb.toInt()} MB)!"
                 }
                 isCondByKuota -> {
-                    reason = "📊 By Kuota: Budget Kuota Wi-Fi Hari Ini (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName dihentikan otomatis."
+                    reason = "📊 By Kuota HP: Budget Kuota Wi-Fi Total (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName dihentikan otomatis."
                 }
                 isCondByTime -> {
                     reason = "🕒 By Time: $appName sedang berada di dalam jadwal jam gembok / tidur."
