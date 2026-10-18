@@ -77,15 +77,34 @@ class BlockedActivity : ComponentActivity() {
                         finish()
                     },
                     onStartChallenge = {
-                        if (isTotpConfigured) {
-                            showChallengeDialog = true
-                        } else {
+                        if (QuotaManager.isStrictTimerActive(context)) {
                             Toast.makeText(
                                 context,
-                                "Setup Google Authenticator di CiroKuota belum aktif!",
+                                "⏳ Mode Gembok Timer Aktif! Tidak ada jalan pintas sampai waktu gembok selesai.",
                                 Toast.LENGTH_LONG
                             ).show()
+                            return@BlockedScreen
                         }
+
+                        if (QuotaManager.isStrictChargerActive(context) && !QuotaManager.isDeviceCharging(context)) {
+                            Toast.makeText(
+                                context,
+                                "🔌 Gembok Ketat: Tancapkan HP ke charger/cas dulu untuk membuka tantangan!",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            return@BlockedScreen
+                        }
+
+                        if (QuotaManager.isStrictTotpActive(context) && !isTotpConfigured) {
+                            Toast.makeText(
+                                context,
+                                "Setup Google Authenticator di Tab Strict Mode belum aktif!",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            return@BlockedScreen
+                        }
+
+                        showChallengeDialog = true
                     }
                 )
 

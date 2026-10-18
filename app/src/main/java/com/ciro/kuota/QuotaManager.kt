@@ -4,11 +4,14 @@ import android.app.AppOpsManager
 import android.app.usage.NetworkStats
 import android.app.usage.NetworkStatsManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.TrafficStats
+import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.Process
@@ -285,6 +288,114 @@ object QuotaManager {
             packageName.contains("opera") ||
             packageName.contains("duckduckgo") ||
             packageName.contains("emmx")
+
+    // Profile Conditions (Kondisi Pemicu Blokir)
+    private const val KEY_COND_KUOTA = "cond_by_kuota"
+    private const val KEY_COND_DURATION = "cond_by_duration"
+    private const val KEY_COND_TIME = "cond_by_time"
+    private const val KEY_COND_LAUNCH = "cond_by_launch"
+    private const val KEY_MAX_LAUNCHES = "max_launches_per_day"
+    private const val KEY_TIME_START_HOUR = "time_start_hour"
+    private const val KEY_TIME_START_MIN = "time_start_min"
+    private const val KEY_TIME_END_HOUR = "time_end_hour"
+    private const val KEY_TIME_END_MIN = "time_end_min"
+
+    fun isCondByKuotaActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_KUOTA, true)
+    fun setCondByKuotaActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_KUOTA, active).apply()
+
+    fun isCondByDurationActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_DURATION, true)
+    fun setCondByDurationActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_DURATION, active).apply()
+
+    fun isCondByTimeActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_TIME, false)
+    fun setCondByTimeActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_TIME, active).apply()
+
+    fun isCondByLaunchActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_LAUNCH, false)
+    fun setCondByLaunchActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_LAUNCH, active).apply()
+
+    fun getMaxLaunchesPerDay(context: Context): Int = getPrefs(context).getInt(KEY_MAX_LAUNCHES, 5)
+    fun setMaxLaunchesPerDay(context: Context, max: Int) = getPrefs(context).edit().putInt(KEY_MAX_LAUNCHES, max).apply()
+
+    fun getTimeSchedule(context: Context): Pair<Pair<Int, Int>, Pair<Int, Int>> {
+        val prefs = getPrefs(context)
+        val sH = prefs.getInt(KEY_TIME_START_HOUR, 22)
+        val sM = prefs.getInt(KEY_TIME_START_MIN, 0)
+        val eH = prefs.getInt(KEY_TIME_END_HOUR, 5)
+        val eM = prefs.getInt(KEY_TIME_END_MIN, 0)
+        return Pair(Pair(sH, sM), Pair(eH, eM))
+    }
+
+    fun setTimeSchedule(context: Context, sH: Int, sM: Int, eH: Int, eM: Int) {
+        getPrefs(context).edit()
+            .putInt(KEY_TIME_START_HOUR, sH)
+            .putInt(KEY_TIME_START_MIN, sM)
+            .putInt(KEY_TIME_END_HOUR, eH)
+            .putInt(KEY_TIME_END_MIN, eM)
+            .apply()
+    }
+
+    fun isCurrentTimeInSchedule(context: Context): Boolean {
+        if (!isCondByTimeActive(context)) return false
+        val (start, end) = getTimeSchedule(context)
+        val (sH, sM) = start
+        val (eH, eM) = end
+        val startMins = sH * 60 + sM
+        val endMins = eH * 60 + eM
+
+        val now = Calendar.getInstance()
+        val currentMins = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+
+        return if (startMins <= endMins) {
+            currentMins in startMins..endMins
+        } else {
+            // Over midnight (e.g. 22:00 to 05:00)
+            currentMins >= startMins || currentMins <= endMins
+        }
+    }
+
+    // Launch Count Tracking per App per Day
+    fun getLaunchCountToday(context: Context, pkg: String): Int {
+        val todayStr = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+        return getPrefs(context).getInt("launch_${todayStr}_$pkg", 0)
+    }
+
+    fun incrementLaunchCount(context: Context, pkg: String): Int {
+        val todayStr = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+        val key = "launch_${todayStr}_$pkg"
+        val count = getPrefs(context).getInt(key, 0) + 1
+        getPrefs(context).edit().putInt(key, count).apply()
+        return count
+    }
+
+    // STRICT MODE OPTIONS (Gembok Ketat & Pilihan Tantangan)
+    private const val KEY_STRICT_MATH = "strict_math_active"
+    private const val KEY_STRICT_TOTP = "strict_totp_active"
+    private const val KEY_STRICT_CHARGER = "strict_charger_active"
+    private const val KEY_STRICT_TIMER = "strict_timer_active"
+
+    fun isStrictMathActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_STRICT_MATH, true)
+    fun setStrictMathActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_STRICT_MATH, active).apply()
+
+    fun isStrictTotpActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_STRICT_TOTP, true)
+    fun setStrictTotpActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_STRICT_TOTP, active).apply()
+
+    fun isStrictChargerActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_STRICT_CHARGER, false)
+    fun setStrictChargerActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_STRICT_CHARGER, active).apply()
+
+    fun isStrictTimerActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_STRICT_TIMER, false)
+    fun setStrictTimerActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_STRICT_TIMER, active).apply()
+
+    fun isDeviceCharging(context: Context): Boolean {
+        return try {
+            val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+            val batteryStatus = context.registerReceiver(null, filter)
+            val plugged = batteryStatus?.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1) ?: -1
+            plugged == BatteryManager.BATTERY_PLUGGED_AC ||
+            plugged == BatteryManager.BATTERY_PLUGGED_USB ||
+            plugged == BatteryManager.BATTERY_PLUGGED_WIRELESS
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     fun getAllCandidateApps(context: Context, selectedPackages: Set<String> = getBlackholePackages(context)): List<SelectableApp> {
         val pm = context.packageManager

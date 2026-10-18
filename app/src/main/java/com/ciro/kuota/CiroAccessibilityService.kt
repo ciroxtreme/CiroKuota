@@ -73,6 +73,7 @@ class CiroAccessibilityService : AccessibilityService() {
 
                     // Immediate check when entering target app
                     if (QuotaManager.isAppBlockMonitored(applicationContext, pkg)) {
+                        QuotaManager.incrementLaunchCount(applicationContext, pkg)
                         checkAndEnforceBlock(pkg)
                     }
                 }
@@ -142,31 +143,44 @@ class CiroAccessibilityService : AccessibilityService() {
 
             val isKillswitch = QuotaManager.isKillswitchActive(applicationContext)
             val quotaStatus = QuotaManager.getQuotaStatus(applicationContext)
-            val isAutoCutoff = QuotaManager.isAutoCutoffActive(applicationContext) && quotaStatus.isLimitReached
+            val isCondByKuota = QuotaManager.isCondByKuotaActive(applicationContext) && (QuotaManager.isAutoCutoffActive(applicationContext) && quotaStatus.isLimitReached)
             val manualUntil = QuotaManager.getManualLockUntil(applicationContext)
             val isManualLocked = manualUntil > now
 
             val isMonitored = QuotaManager.isAppBlockMonitored(applicationContext, pkg)
-            if (!isMonitored && !isKillswitch && !isAutoCutoff) return
+            if (!isMonitored && !isKillswitch && !isCondByKuota) return
 
-            val sessionLimitSec = QuotaManager.getAppBlockSessionLimitMinutes(applicationContext) * 60L
             val appName = QuotaManager.getAppDisplayName(applicationContext, pkg)
-
             var reason: String? = null
+
+            // Periksa kondisi satu per satu
+            val isCondByTime = QuotaManager.isCurrentTimeInSchedule(applicationContext)
+            val isCondByLaunch = QuotaManager.isCondByLaunchActive(applicationContext)
+            val maxLaunches = QuotaManager.getMaxLaunchesPerDay(applicationContext)
+            val launchCount = QuotaManager.getLaunchCountToday(applicationContext, pkg)
+
+            val isCondByDuration = QuotaManager.isCondByDurationActive(applicationContext)
+            val sessionLimitSec = QuotaManager.getAppBlockSessionLimitMinutes(applicationContext) * 60L
 
             when {
                 isKillswitch -> {
-                    reason = "🚨 Killswitch Darurat sedang aktif. Seluruh akses internet ke aplikasi hiburan dimatikan."
+                    reason = "🚨 Stop Data Aktif! Akses ke $appName sementara dihentikan total."
                 }
                 isManualLocked -> {
                     val remainingMin = ((manualUntil - now) / 60000) + 1
-                    reason = "🔒 Kunci Sesi Khilaf aktif! $appName terkunci selama $remainingMin menit lagi."
+                    reason = "🔒 Kunci Ketat (Strict Mode) aktif! $appName terkunci selama $remainingMin menit lagi."
                 }
-                isAutoCutoff -> {
-                    reason = "📊 Budget Kuota Wi-Fi Hari Ini (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName dihentikan otomatis."
+                isCondByKuota -> {
+                    reason = "📊 By Kuota: Budget Kuota Wi-Fi Hari Ini (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName dihentikan otomatis."
                 }
-                currentSessionSeconds >= sessionLimitSec -> {
-                    reason = "⏳ Batas Waktu Sesi $appName (${sessionLimitSec / 60} menit) telah tercapai! Kuota & waktu Anda terselamatkan."
+                isCondByTime -> {
+                    reason = "🕒 By Time: $appName sedang berada di dalam jadwal jam gembok / tidur."
+                }
+                isCondByLaunch && launchCount > maxLaunches -> {
+                    reason = "🔢 By Launch: Batas membuka $appName hari ini (maks $maxLaunches kali) telah habis!"
+                }
+                isCondByDuration && currentSessionSeconds >= sessionLimitSec -> {
+                    reason = "⏳ By Duration: Batas Waktu Sesi $appName (${sessionLimitSec / 60} menit) telah tercapai!"
                 }
             }
 
