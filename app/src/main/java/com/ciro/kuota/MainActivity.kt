@@ -1689,6 +1689,233 @@ fun AppBlockPickerDialog(
     )
 }
 
+// ================= DIALOG INTERAKTIF TANTANGAN NERAKA =================
+@Composable
+fun DarkSoulsUnlockDialog(
+    secretKey: String,
+    onDismiss: () -> Unit,
+    onSuccess: () -> Unit
+) {
+    val context = LocalContext.current
+    var num1 by remember { mutableStateOf(Random.nextInt(25, 75)) }
+    var num2 by remember { mutableStateOf(Random.nextInt(15, 60)) }
+    val correctMath = num1 + num2
+
+    var mathAnswer by remember { mutableStateOf("") }
+    var totpInput by remember { mutableStateOf("") }
+    var isMathSolved by remember { mutableStateOf(false) }
+
+    var difficultySeconds by remember { mutableStateOf(20) }
+    var secondsLeft by remember { mutableStateOf(20) }
+    var isFailed by remember { mutableStateOf(false) }
+
+    // Live sync indicator of Authenticator 30s cycle
+    var authCycleSec by remember { mutableStateOf(TotpHelper.getSecondsRemaining(30)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            authCycleSec = TotpHelper.getSecondsRemaining(30)
+            delay(500)
+        }
+    }
+
+    LaunchedEffect(isMathSolved) {
+        if (isMathSolved) {
+            secondsLeft = difficultySeconds
+            while (secondsLeft > 0 && !isFailed) {
+                delay(1000)
+                secondsLeft--
+            }
+            if (secondsLeft <= 0) {
+                isFailed = true
+                Toast.makeText(context, "Waktu Habis! Anda gagal menaklukkan tantangan.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Default.Whatshot, contentDescription = null, tint = AccentRed, modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "TANTANGAN NERAKA",
+                    fontFamily = RighteousFontFamily,
+                    fontSize = 18.sp,
+                    color = AccentRed
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (isFailed) {
+                    Text(
+                        text = "❌ GAGAL! Waktu Anda habis atau kode salah. Mode autopilot khilaf Anda berhasil dicegat. Silakan istirahat!",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 12.5.sp,
+                        color = AccentRed,
+                        lineHeight = 18.sp
+                    )
+                } else if (!isMathSolved) {
+                    Text(
+                        text = "Ronde 1: Selesaikan soal matematika untuk mengaktifkan otak rasional:",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF1E1E1E),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "$num1 + $num2 = ?",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                            color = AccentAmber,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = mathAnswer,
+                        onValueChange = { mathAnswer = it },
+                        label = { Text("Jawaban Angka") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        text = "Pilih Tingkat Adrenalin Masuk Kode:",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 11.sp,
+                        color = Color.LightGray
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(20 to "Normal (20s)", 10 to "Hard (10s)", 5 to "Neraka (5s)").forEach { (sec, label) ->
+                            val isSel = difficultySeconds == sec
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isSel) AccentRed else Color(0xFF2A2A2A),
+                                border = BorderStroke(1.dp, if (isSel) AccentRed else Color.Gray),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { difficultySeconds = sec }
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 10.sp,
+                                    color = if (isSel) Color.White else Color.LightGray,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (mathAnswer.trim() == correctMath.toString()) {
+                                isMathSolved = true
+                                Toast.makeText(context, "Jawaban Benar! Waktu $difficultySeconds detik dimulai!", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "Salah hitung! Coba lagi.", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentAmber)
+                    ) {
+                        Text("Lanjut ke Ronde Authenticator", fontWeight = FontWeight.Bold, color = Color.Black)
+                    }
+                } else {
+                    // RONDE PANIK: INPUT KODE TOTP DALAM WAKTU SANGAT SEMPIT
+                    Text(
+                        text = "🚨 Ronde 2: Buka Google Authenticator dan masukkan 6 digit kode sekarang!",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 12.sp,
+                        color = AccentRed,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    // Live Authenticator cycle indicator
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF222222),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Siklus Authenticator:", fontFamily = PoppinsFontFamily, fontSize = 11.sp, color = Color.Gray)
+                            Text("$authCycleSec detik lagi", fontFamily = JetBrainsMonoFontFamily, fontWeight = FontWeight.Bold, fontSize = 11.sp, color = AccentGreen)
+                        }
+                    }
+
+                    // Panic Bar
+                    LinearProgressIndicator(
+                        progress = { (secondsLeft / difficultySeconds.toFloat()).coerceIn(0f, 1f) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                        color = AccentRed,
+                        trackColor = Color.DarkGray
+                    )
+
+                    Text(
+                        text = "⏳ Sisa Waktu Anda: $secondsLeft Detik lagi!",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = AccentRed,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = totpInput,
+                        onValueChange = { if (it.length <= 6) totpInput = it },
+                        label = { Text("6 Digit Kode Authenticator") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Button(
+                        onClick = {
+                            val isValid = TotpHelper.verifyCode(secretKey, totpInput)
+                            if (isValid) {
+                                onSuccess()
+                            } else {
+                                isFailed = true
+                                Toast.makeText(context, "Kode Authenticator Salah!", Toast.LENGTH_LONG).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                    ) {
+                        Text("Validasi & Buka Kunci", fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Tutup", color = Color.LightGray)
+            }
+        }
+    )
+}
+
 // ================= TAB 4: PENGATURAN & KEKEBALAN SISTEM HP =================
 @Composable
 fun TabSettingsScreen(
