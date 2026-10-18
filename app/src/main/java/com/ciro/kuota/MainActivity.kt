@@ -447,9 +447,15 @@ fun TabProtectionScreen(
                 )
 
                 // VPN Blackhole Firewall
+                val context = LocalContext.current
+                val blockedCount = QuotaManager.getBlackholePackages(context).size
                 QuickSwitchCard(
                     title = "VPN Blackhole Firewall",
-                    subtitle = "Pisahkan koneksi: Instagram & Chrome diblackhole, WA/Telegram lancar",
+                    subtitle = if (blockedCount == 0) {
+                        "Proteksi aktif (belum ada aplikasi yang dipilih untuk diblokir)"
+                    } else {
+                        "$blockedCount aplikasi diblokir internetnya, aplikasi lain lancar"
+                    },
                     icon = Icons.Default.VpnKey,
                     isActive = isVpnFirewall,
                     activeColor = Color(0xFF38BDF8),

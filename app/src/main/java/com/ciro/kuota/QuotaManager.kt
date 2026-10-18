@@ -60,16 +60,7 @@ object QuotaManager {
 
     val DEFAULT_BLACKHOLE_APPS = setOf(
         "com.instagram.android",
-        "com.instagram.lite",
-        "com.android.chrome",
-        "com.google.android.apps.chrome",
-        "org.mozilla.firefox",
-        "com.brave.browser",
-        "com.sec.android.app.sbrowser",
-        "com.opera.browser",
-        "com.opera.mini.native",
-        "com.microsoft.emmx",
-        "com.duckduckgo.mobile.android"
+        "com.instagram.lite"
     )
 
     private fun getPrefs(context: Context): SharedPreferences {
