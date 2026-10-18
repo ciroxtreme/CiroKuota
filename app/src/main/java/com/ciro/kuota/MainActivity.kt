@@ -99,6 +99,8 @@ fun CiroKuotaMainScreen(
 
     // State Tab 2: Schedules Conditions
     var isCondByKuota by remember { mutableStateOf(QuotaManager.isCondByKuotaActive(context)) }
+    var isCondByAppQuota by remember { mutableStateOf(QuotaManager.isCondByAppQuotaActive(context)) }
+    var appQuotaBudgetMb by remember { mutableStateOf(QuotaManager.getAppQuotaBudgetMb(context)) }
     var isCondByDuration by remember { mutableStateOf(QuotaManager.isCondByDurationActive(context)) }
     var isCondByTime by remember { mutableStateOf(QuotaManager.isCondByTimeActive(context)) }
     var isCondByLaunch by remember { mutableStateOf(QuotaManager.isCondByLaunchActive(context)) }
@@ -345,6 +347,8 @@ fun CiroKuotaMainScreen(
                         maxLaunches = maxLaunches,
                         timeSchedule = timeSchedule,
                         isCondByKuota = isCondByKuota,
+                        isCondByAppQuota = isCondByAppQuota,
+                        appQuotaBudgetMb = appQuotaBudgetMb,
                         isCondByDuration = isCondByDuration,
                         isCondByTime = isCondByTime,
                         isCondByLaunch = isCondByLaunch,
@@ -361,6 +365,14 @@ fun CiroKuotaMainScreen(
                         onToggleCondByKuota = {
                             isCondByKuota = !isCondByKuota
                             QuotaManager.setCondByKuotaActive(context, isCondByKuota)
+                        },
+                        onToggleCondByAppQuota = {
+                            isCondByAppQuota = !isCondByAppQuota
+                            QuotaManager.setCondByAppQuotaActive(context, isCondByAppQuota)
+                        },
+                        onAppQuotaBudgetChange = { mb ->
+                            appQuotaBudgetMb = mb
+                            QuotaManager.setAppQuotaBudgetMb(context, mb)
                         },
                         onToggleCondByDuration = {
                             isCondByDuration = !isCondByDuration
@@ -770,6 +782,8 @@ fun TabSchedulesScreen(
     maxLaunches: Int,
     timeSchedule: Pair<Pair<Int, Int>, Pair<Int, Int>>,
     isCondByKuota: Boolean,
+    isCondByAppQuota: Boolean,
+    appQuotaBudgetMb: Float,
     isCondByDuration: Boolean,
     isCondByTime: Boolean,
     isCondByLaunch: Boolean,
@@ -780,6 +794,8 @@ fun TabSchedulesScreen(
     onManageAppBlockApps: () -> Unit,
     onSyncWithBlackhole: () -> Unit,
     onToggleCondByKuota: () -> Unit,
+    onToggleCondByAppQuota: () -> Unit,
+    onAppQuotaBudgetChange: (Float) -> Unit,
     onToggleCondByDuration: () -> Unit,
     onToggleCondByTime: () -> Unit,
     onToggleCondByLaunch: () -> Unit,
@@ -939,10 +955,10 @@ fun TabSchedulesScreen(
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                // 1. By Kuota
+                // 1. By Kuota Utama (HP)
                 QuickSwitchCard(
-                    title = "📶 By Kuota (Eksklusif Ciro)",
-                    subtitle = "Blokir aplikasi target otomatis jika kuota mencapai budget (${budgetMb.toInt()} MB)",
+                    title = "📶 By Kuota Utama (Total HP)",
+                    subtitle = "Blokir aplikasi target otomatis jika kuota total mencapai budget (${budgetMb.toInt()} MB)",
                     icon = Icons.Default.SignalCellularAlt,
                     isActive = isCondByKuota,
                     activeColor = AccentGreen,
@@ -953,7 +969,42 @@ fun TabSchedulesScreen(
                     onToggle = onToggleCondByKuota
                 )
 
-                // 2. By Duration (Batas Waktu Sesi)
+                // 2. By Kuota per Aplikasi (Batas Individual App)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    QuickSwitchCard(
+                        title = "📊 By Kuota per Aplikasi",
+                        subtitle = "Blokir aplikasi target jika pemakaian individunya mencapai batas (${appQuotaBudgetMb.toInt()} MB/hari)",
+                        icon = Icons.Default.DataSaverOn,
+                        isActive = isCondByAppQuota,
+                        activeColor = AccentAmber,
+                        cardBg = cardColor,
+                        cardBorder = cardBorder,
+                        textPrimary = textPrimary,
+                        textSecondary = textSecondary,
+                        onToggle = onToggleCondByAppQuota
+                    )
+
+                    if (isCondByAppQuota) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(100f, 250f, 500f, 750f, 1024f).forEach { mb ->
+                                val label = if (mb >= 1024f) "1 GB" else "${mb.toInt()}M"
+                                PillChoice(
+                                    label = label,
+                                    isSelected = appQuotaBudgetMb == mb,
+                                    isDark = isDark,
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    onAppQuotaBudgetChange(mb)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 3. By Duration (Batas Waktu Sesi)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     QuickSwitchCard(
                         title = "⏳ By Duration (Batas Sesi)",

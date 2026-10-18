@@ -302,6 +302,51 @@ object QuotaManager {
 
     fun isCondByKuotaActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_KUOTA, true)
     fun setCondByKuotaActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_KUOTA, active).apply()
+    // Kuota per App (Budget per individual target app)
+    private const val KEY_COND_APP_KUOTA = "cond_by_app_kuota"
+    private const val KEY_APP_KUOTA_BUDGET_MB = "app_quota_budget_mb"
+
+    fun isCondByAppQuotaActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_APP_KUOTA, true)
+    fun setCondByAppQuotaActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_APP_KUOTA, active).apply()
+
+    fun getAppQuotaBudgetMb(context: Context): Float = getPrefs(context).getFloat(KEY_APP_KUOTA_BUDGET_MB, 500f)
+    fun setAppQuotaBudgetMb(context: Context, mb: Float) = getPrefs(context).edit().putFloat(KEY_APP_KUOTA_BUDGET_MB, mb).apply()
+
+    fun getAppUsageTodayBytes(context: Context, packageName: String): Long {
+        return try {
+            val pm = context.packageManager
+            val appInfo = pm.getApplicationInfo(packageName, 0)
+            val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
+            val hasPerm = hasUsageStatsPermission(context)
+            if (hasPerm && nsm != null) {
+                val startTime = getMidnightTimestamp()
+                val endTime = System.currentTimeMillis()
+                val stats: NetworkStats = nsm.queryDetailsForUid(
+                    ConnectivityManager.TYPE_WIFI,
+                    null,
+                    startTime,
+                    endTime,
+                    appInfo.uid
+                )
+                var bytes = 0L
+                val bucket = NetworkStats.Bucket()
+                while (stats.hasNextBucket()) {
+                    stats.getNextBucket(bucket)
+                    bytes += bucket.rxBytes + bucket.txBytes
+                }
+                stats.close()
+                bytes
+            } else {
+                0L
+            }
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    fun getAppUsageTodayMb(context: Context, packageName: String): Float {
+        return getAppUsageTodayBytes(context, packageName).toFloat() / (1024f * 1024f)
+    }
 
     fun isCondByDurationActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_DURATION, true)
     fun setCondByDurationActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_DURATION, active).apply()

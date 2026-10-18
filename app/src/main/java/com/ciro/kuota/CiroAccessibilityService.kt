@@ -162,6 +162,11 @@ class CiroAccessibilityService : AccessibilityService() {
             val isCondByDuration = QuotaManager.isCondByDurationActive(applicationContext)
             val sessionLimitSec = QuotaManager.getAppBlockSessionLimitMinutes(applicationContext) * 60L
 
+            val isCondByAppQuota = QuotaManager.isCondByAppQuotaActive(applicationContext)
+            val appBudgetMb = QuotaManager.getAppQuotaBudgetMb(applicationContext)
+            val appUsageMb = if (isCondByAppQuota) QuotaManager.getAppUsageTodayMb(applicationContext, pkg) else 0f
+            val isAppQuotaExceeded = isCondByAppQuota && appUsageMb >= appBudgetMb
+
             when {
                 isKillswitch -> {
                     reason = "🚨 Stop Data Aktif! Akses ke $appName sementara dihentikan total."
@@ -169,6 +174,9 @@ class CiroAccessibilityService : AccessibilityService() {
                 isManualLocked -> {
                     val remainingMin = ((manualUntil - now) / 60000) + 1
                     reason = "🔒 Kunci Ketat (Strict Mode) aktif! $appName terkunci selama $remainingMin menit lagi."
+                }
+                isCondByAppQuota && isAppQuotaExceeded -> {
+                    reason = "📊 By Kuota App: Pemakaian $appName hari ini (${appUsageMb.toInt()} MB) melebihi batas per aplikasi (${appBudgetMb.toInt()} MB)!"
                 }
                 isCondByKuota -> {
                     reason = "📊 By Kuota: Budget Kuota Wi-Fi Hari Ini (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName dihentikan otomatis."
