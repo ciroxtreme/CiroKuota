@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ciro.kuota.ui.theme.*
@@ -132,17 +133,23 @@ fun CiroKuotaMainScreen(
         isVpnFirewall = false
     }
 
-    // Auto Refresh setiap 3 detik
+    // Auto Refresh status & kuota setiap 3 detik
     LaunchedEffect(Unit) {
         while (true) {
             quotaStatus = QuotaManager.getQuotaStatus(context)
             topApps = QuotaManager.getTopMonitoredAppsUsage(context)
-            candidateApps = QuotaManager.getAllCandidateApps(context)
             hasUsagePerm = QuotaManager.hasUsageStatsPermission(context)
             hasAccessPerm = QuotaManager.hasAccessibilityPermission(context)
             isBatteryIgnored = QuotaManager.isBatteryOptimizationIgnored(context)
             manualLockUntil = QuotaManager.getManualLockUntil(context)
             delay(3000)
+        }
+    }
+
+    // Refresh candidate apps saat pertama dibuka atau saat berpindah ke tab Pengaturan
+    LaunchedEffect(currentTab) {
+        if (currentTab == CiroTab.SETTINGS) {
+            candidateApps = QuotaManager.getAllCandidateApps(context)
         }
     }
 
@@ -361,6 +368,18 @@ fun CiroKuotaMainScreen(
                             QuotaManager.toggleBlackholePackage(context, pkg)
                             candidateApps = QuotaManager.getAllCandidateApps(context)
                             if (isVpnFirewall) startVpnSafely() // Reload VPN with updated apps
+                        },
+                        onResetDefault = {
+                            QuotaManager.resetToDefaultApps(context)
+                            candidateApps = QuotaManager.getAllCandidateApps(context)
+                            if (isVpnFirewall) startVpnSafely()
+                            Toast.makeText(context, "Aplikasi target direset ke bawaan!", Toast.LENGTH_SHORT).show()
+                        },
+                        onClearAll = {
+                            QuotaManager.unselectAllApps(context)
+                            candidateApps = QuotaManager.getAllCandidateApps(context)
+                            if (isVpnFirewall) startVpnSafely()
+                            Toast.makeText(context, "Semua aplikasi dibatalkan pilihannya!", Toast.LENGTH_SHORT).show()
                         }
                     )
                 }
@@ -535,7 +554,10 @@ fun TabHabitLockScreen(
     val isLocked = manualLockUntil > now
 
     val secretKey = remember { TotpHelper.getOrCreateSecret(context) }
+    var isTotpConfigured by remember { mutableStateOf(TotpHelper.isConfigured(context)) }
     var showChallengeDialog by remember { mutableStateOf(false) }
+    var showTestDialog by remember { mutableStateOf(false) }
+    var setupInputCode by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -708,70 +730,251 @@ fun TabHabitLockScreen(
         }
 
         item {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = cardColor,
-                border = BorderStroke(1.dp, cardBorder),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            if (isTotpConfigured) {
+                // TAMPILAN JIKA SUDAH TERHUBUNG: Kunci penyiapan otomatis tersembunyi!
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = cardColor,
+                    border = BorderStroke(1.dp, AccentGreen.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = "Kunci Rahasia Penyiapan (Setup Key):",
-                        fontFamily = PoppinsFontFamily,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 12.sp,
-                        color = textPrimary
-                    )
-
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = subtaskBgColor(isDark),
-                        border = BorderStroke(1.dp, cardBorder),
-                        modifier = Modifier.fillMaxWidth()
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Text(
-                                text = secretKey,
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
-                                color = AccentGreen,
-                                letterSpacing = 2.sp
-                            )
-                            IconButton(
-                                onClick = {
-                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("CiroKuota Secret", secretKey))
-                                    Toast.makeText(context, "Kunci rahasia disalin ke clipboard!", Toast.LENGTH_SHORT).show()
-                                },
-                                modifier = Modifier.size(32.dp)
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(AccentGreen.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Salin Kunci", tint = textPrimary, modifier = Modifier.size(16.dp))
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = null,
+                                    tint = AccentGreen,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Column {
+                                Text(
+                                    text = "Google Authenticator Terhubung",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = textPrimary
+                                )
+                                Text(
+                                    text = "Kunci penyiapan aktif & tersimpan aman.",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontSize = 11.sp,
+                                    color = textSecondary
+                                )
+                            }
+                        }
+
+                        Divider(color = cardBorder, thickness = 0.8.dp)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { showTestDialog = true },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Uji Validasi Kode", fontSize = 11.sp, color = textPrimary)
+                            }
+
+                            TextButton(
+                                onClick = {
+                                    TotpHelper.setConfigured(context, false)
+                                    isTotpConfigured = false
+                                    Toast.makeText(context, "Kunci penyiapan ditampilkan kembali.", Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Hubungkan Ulang", fontSize = 11.sp, color = AccentAmber)
                             }
                         }
                     }
+                }
+            } else {
+                // TAMPILAN PENYIAPAN KUNCI RAHASIA (Sebelum diverifikasi)
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = cardColor,
+                    border = BorderStroke(1.dp, cardBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "Kunci Rahasia Penyiapan (Setup Key):",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp,
+                            color = textPrimary
+                        )
 
-                    Text(
-                        text = "💡 Cara Pakai di Google Authenticator:\n1. Buka aplikasi Authenticator di HP Anda.\n2. Klik tanda '+' lalu pilih 'Masukkan Kunci Penyiapan'.\n3. Nama Akun: CiroKuota, Kunci: Tempel kunci di atas.\n4. Sekarang Authenticator Anda sudah terhubung!",
-                        fontFamily = PoppinsFontFamily,
-                        fontSize = 11.sp,
-                        color = textSecondary,
-                        lineHeight = 16.sp
-                    )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = subtaskBgColor(isDark),
+                            border = BorderStroke(1.dp, cardBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = secretKey,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = AccentGreen,
+                                    letterSpacing = 2.sp
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("CiroKuota Secret", secretKey))
+                                        Toast.makeText(context, "Kunci rahasia disalin ke clipboard!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Salin Kunci", tint = textPrimary, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+
+                        Text(
+                            text = "💡 Langkah Penyiapan:\n1. Buka aplikasi Google Authenticator di HP Anda.\n2. Klik '+' lalu pilih 'Masukkan Kunci Penyiapan'.\n3. Nama Akun: CiroKuota, Kunci: Tempel kunci di atas.\n4. Masukkan 6 digit kode dari Authenticator di bawah ini untuk verifikasi & menyembunyikan kunci:",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 11.sp,
+                            color = textSecondary,
+                            lineHeight = 16.sp
+                        )
+
+                        OutlinedTextField(
+                            value = setupInputCode,
+                            onValueChange = { if (it.length <= 6) setupInputCode = it },
+                            label = { Text("6 Digit Kode Verifikasi") },
+                            placeholder = { Text("Contoh: 123456") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Button(
+                            onClick = {
+                                val isValid = TotpHelper.verifyCode(secretKey, setupInputCode)
+                                if (isValid) {
+                                    TotpHelper.setConfigured(context, true)
+                                    isTotpConfigured = true
+                                    setupInputCode = ""
+                                    Toast.makeText(context, "✅ Berhasil! Google Authenticator terhubung!", Toast.LENGTH_LONG).show()
+                                } else {
+                                    Toast.makeText(context, "❌ Kode salah! Pastikan kunci sudah ditempel dan jam di HP Anda tepat.", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            enabled = setupInputCode.length == 6,
+                            colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Verifikasi & Sembunyikan Kunci", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                    }
                 }
             }
         }
 
         item { Spacer(modifier = Modifier.height(20.dp)) }
+    }
+
+    // DIALOG UJI VALIDASI KODE
+    if (showTestDialog) {
+        var testCode by remember { mutableStateOf("") }
+        var testResult by remember { mutableStateOf<Boolean?>(null) }
+        AlertDialog(
+            onDismissRequest = { showTestDialog = false },
+            title = {
+                Text(
+                    text = "Uji Validasi Kode Authenticator",
+                    fontFamily = PoppinsFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Masukkan 6 digit kode saat ini dari aplikasi Google Authenticator untuk menguji validasi:",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 12.sp,
+                        color = textSecondary
+                    )
+                    OutlinedTextField(
+                        value = testCode,
+                        onValueChange = {
+                            if (it.length <= 6) {
+                                testCode = it
+                                testResult = null
+                            }
+                        },
+                        label = { Text("6 Digit Kode") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    testResult?.let { passed ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (passed) AccentGreen.copy(alpha = 0.15f) else AccentRed.copy(alpha = 0.15f),
+                            border = BorderStroke(1.dp, if (passed) AccentGreen else AccentRed),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = if (passed) "✅ KODE VALID! Sinkronisasi berhasil 100%." else "❌ KODE TIDAK VALID! Kode acak atau salah ditolak.",
+                                color = if (passed) AccentGreen else AccentRed,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.5.sp,
+                                modifier = Modifier.padding(10.dp),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val valid = TotpHelper.verifyCode(secretKey, testCode)
+                        testResult = valid
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+                ) {
+                    Text("Cek Validitas", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTestDialog = false }) {
+                    Text("Tutup", color = textSecondary)
+                }
+            }
+        )
     }
 
     // DIALOG TANTANGAN NERAKA
@@ -1026,71 +1229,250 @@ fun TabSettingsScreen(
     cardBorder: Color,
     textPrimary: Color,
     textSecondary: Color,
-    onToggleApp: (String) -> Unit
+    onToggleApp: (String) -> Unit,
+    onResetDefault: () -> Unit,
+    onClearAll: () -> Unit
 ) {
     val context = LocalContext.current
+    var searchQuery by remember { mutableStateOf("") }
+    var filterMode by remember { mutableStateOf("ALL") } // ALL, USER, SYSTEM, SELECTED
+
+    val userAppCount = remember(candidateApps) { candidateApps.count { !it.isSystemApp } }
+    val systemAppCount = remember(candidateApps) { candidateApps.count { it.isSystemApp } }
+    val selectedCount = remember(candidateApps) { candidateApps.count { it.isSelected } }
+
+    val filteredApps = remember(candidateApps, searchQuery, filterMode) {
+        candidateApps.filter { app ->
+            val matchesSearch = searchQuery.isBlank() ||
+                    app.appName.contains(searchQuery, ignoreCase = true) ||
+                    app.packageName.contains(searchQuery, ignoreCase = true)
+
+            val matchesFilter = when (filterMode) {
+                "USER" -> !app.isSystemApp
+                "SYSTEM" -> app.isSystemApp
+                "SELECTED" -> app.isSelected
+                else -> true
+            }
+
+            matchesSearch && matchesFilter
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Checklist Aplikasi Target VPN Blackhole
+        // Section Header
         item {
-            SectionHeader(title = "PILIH APLIKASI TARGET VPN BLACKHOLE", textSecondary = textSecondary)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SectionHeader(title = "PILIH APLIKASI TARGET VPN BLACKHOLE", textSecondary = textSecondary)
+                Text(
+                    text = "Centang aplikasi yang ingin diputus kuotanya saat kuota habis atau Killswitch aktif. $selectedCount dari ${candidateApps.size} aplikasi dipilih.",
+                    fontFamily = PoppinsFontFamily,
+                    fontSize = 11.sp,
+                    color = textSecondary
+                )
+            }
         }
 
+        // Search Bar & Filter Controls
         item {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = cardColor,
-                border = BorderStroke(1.dp, cardBorder),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Search Input
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = {
+                        Text(
+                            text = "Cari nama aplikasi atau package...",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 12.sp,
+                            color = textSecondary
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Cari",
+                            tint = textSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Bersihkan",
+                                    tint = textSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AccentGreen,
+                        unfocusedBorderColor = cardBorder,
+                        focusedContainerColor = cardColor,
+                        unfocusedContainerColor = cardColor
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Filter Chips
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        "ALL" to "Semua (${candidateApps.size})",
+                        "USER" to "User ($userAppCount)",
+                        "SYSTEM" to "Sistem ($systemAppCount)",
+                        "SELECTED" to "Terpilih ($selectedCount)"
+                    ).forEach { (mode, label) ->
+                        val isSel = filterMode == mode
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isSel) AccentGreen else cardColor,
+                            border = BorderStroke(1.dp, if (isSel) AccentGreen else cardBorder),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { filterMode = mode }
+                        ) {
+                            Text(
+                                text = label,
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp,
+                                color = if (isSel) Color.Black else textPrimary,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                modifier = Modifier.padding(vertical = 6.dp, horizontal = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Batch Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onResetDefault,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Reset Default (Sosmed & Web)",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = textPrimary
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onClearAll,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Batal Pilih Semua",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AccentRed
+                        )
+                    }
+                }
+            }
+        }
+
+        // List of Apps
+        if (filteredApps.isEmpty()) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = cardColor,
+                    border = BorderStroke(1.dp, cardBorder),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Centang aplikasi yang ingin 'dibuang ke lubang hitam' saat kuota habis / killswitch aktif:",
+                        text = "Tidak ada aplikasi yang cocok dengan pencarian / filter ini.",
                         fontFamily = PoppinsFontFamily,
                         fontSize = 11.5.sp,
-                        color = textSecondary
+                        color = textSecondary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(20.dp)
                     )
-
-                    candidateApps.forEach { app ->
+                }
+            }
+        } else {
+            items(filteredApps.size) { idx ->
+                val app = filteredApps[idx]
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = cardColor,
+                    border = BorderStroke(1.dp, if (app.isSelected) AccentGreen.copy(alpha = 0.5f) else cardBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onToggleApp(app.packageName) }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onToggleApp(app.packageName) }
-                                .padding(vertical = 6.dp, horizontal = 4.dp),
+                            modifier = Modifier.weight(1f),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Checkbox(
-                                    checked = app.isSelected,
-                                    onCheckedChange = { onToggleApp(app.packageName) },
-                                    colors = CheckboxDefaults.colors(checkedColor = AccentGreen)
-                                )
-                                Column {
+                            Checkbox(
+                                checked = app.isSelected,
+                                onCheckedChange = { onToggleApp(app.packageName) },
+                                colors = CheckboxDefaults.colors(checkedColor = AccentGreen)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = app.appName,
                                         fontFamily = PoppinsFontFamily,
                                         fontWeight = FontWeight.SemiBold,
-                                        fontSize = 12.5.sp,
-                                        color = textPrimary
+                                        fontSize = 12.sp,
+                                        color = textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
-                                    Text(
-                                        text = if (app.isInstalled) "Terpasang di ponsel" else "Belum terpasang",
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontSize = 9.5.sp,
-                                        color = if (app.isInstalled) AccentGreen else textSecondary
-                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = if (app.isSystemApp) Color.Gray.copy(alpha = 0.2f) else AccentGreen.copy(alpha = 0.15f)
+                                    ) {
+                                        Text(
+                                            text = if (app.isSystemApp) "Sistem" else "User",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontSize = 8.5.sp,
+                                            color = if (app.isSystemApp) textSecondary else AccentGreen,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
                                 }
+                                Text(
+                                    text = app.packageName,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 9.sp,
+                                    color = textSecondary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                     }

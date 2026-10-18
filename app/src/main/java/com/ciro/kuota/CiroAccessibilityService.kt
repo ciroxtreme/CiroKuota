@@ -85,6 +85,7 @@ class CiroAccessibilityService : AccessibilityService() {
     private fun checkAndEnforceBlock(pkg: String, currentSessionSeconds: Long = 0) {
         try {
             if (!QuotaManager.isAppLockActive(applicationContext)) return
+            if (QuotaManager.isTempPassActive(applicationContext)) return
 
             val now = System.currentTimeMillis()
             if (now - lastBlockedTime < 1500) return // Debounce

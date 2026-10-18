@@ -5,6 +5,7 @@ import android.app.usage.NetworkStats
 import android.app.usage.NetworkStatsManager
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.TrafficStats
@@ -28,7 +29,8 @@ data class SelectableApp(
     val packageName: String,
     val appName: String,
     val category: String,
-    val isInstalled: Boolean,
+    val isInstalled: Boolean = true,
+    val isSystemApp: Boolean = false,
     val isSelected: Boolean
 )
 
@@ -104,6 +106,19 @@ object QuotaManager {
     fun getChallengeLockUntil(context: Context): Long = getPrefs(context).getLong(KEY_CHALLENGE_LOCK_UNTIL, 0L)
     fun setChallengeLockUntil(context: Context, untilTimestamp: Long) = getPrefs(context).edit().putLong(KEY_CHALLENGE_LOCK_UNTIL, untilTimestamp).apply()
 
+    private const val KEY_TEMP_PASS_UNTIL = "temp_pass_until"
+    fun getTempPassUntil(context: Context): Long = getPrefs(context).getLong(KEY_TEMP_PASS_UNTIL, 0L)
+    fun grantTemporaryPass(context: Context, durationMillis: Long = 15 * 60 * 1000L) {
+        val until = System.currentTimeMillis() + durationMillis
+        getPrefs(context).edit().putLong(KEY_TEMP_PASS_UNTIL, until).apply()
+    }
+    fun isTempPassActive(context: Context): Boolean {
+        return getTempPassUntil(context) > System.currentTimeMillis()
+    }
+    fun clearTempPass(context: Context) {
+        getPrefs(context).edit().putLong(KEY_TEMP_PASS_UNTIL, 0L).apply()
+    }
+
     fun isDarkMode(context: Context): Boolean = getPrefs(context).getBoolean(KEY_DARK_MODE, true)
     fun setDarkMode(context: Context, isDark: Boolean) = getPrefs(context).edit().putBoolean(KEY_DARK_MODE, isDark).apply()
 
@@ -144,42 +159,59 @@ object QuotaManager {
     fun getAllCandidateApps(context: Context): List<SelectableApp> {
         val pm = context.packageManager
         val selected = getBlackholePackages(context)
-        val candidateMap = linkedMapOf(
-            "com.instagram.android" to Pair("Instagram", "social"),
-            "com.instagram.lite" to Pair("Instagram Lite", "social"),
-            "com.android.chrome" to Pair("Google Chrome", "browser"),
-            "com.google.android.apps.chrome" to Pair("Chrome Dev", "browser"),
-            "org.mozilla.firefox" to Pair("Mozilla Firefox", "browser"),
-            "com.brave.browser" to Pair("Brave Browser", "browser"),
-            "com.sec.android.app.sbrowser" to Pair("Samsung Internet", "browser"),
-            "com.opera.browser" to Pair("Opera Browser", "browser"),
-            "com.opera.mini.native" to Pair("Opera Mini", "browser"),
-            "com.microsoft.emmx" to Pair("Microsoft Edge", "browser"),
-            "com.duckduckgo.mobile.android" to Pair("DuckDuckGo", "browser"),
-            "com.google.android.youtube" to Pair("YouTube", "video"),
-            "com.zhiliaoapp.musically" to Pair("TikTok", "social"),
-            "com.twitter.android" to Pair("X (Twitter)", "social")
-        )
+        val installedApps = try {
+            pm.getInstalledApplications(PackageManager.GET_META_DATA)
+        } catch (_: Exception) {
+            emptyList()
+        }
 
         val result = mutableListOf<SelectableApp>()
-        for ((pkg, info) in candidateMap) {
-            val isInstalled = try {
-                pm.getApplicationInfo(pkg, 0)
-                true
-            } catch (_: PackageManager.NameNotFoundException) {
-                false
+        for (appInfo in installedApps) {
+            val pkg = appInfo.packageName
+            if (pkg == context.packageName) continue // Jangan blackhole CiroKuota sendiri
+
+            val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            val label = try {
+                pm.getApplicationLabel(appInfo).toString()
+            } catch (_: Exception) {
+                pkg
             }
+
+            val category = when {
+                isInstagram(pkg) -> "instagram"
+                isBrowser(pkg) -> "browser"
+                pkg.contains("youtube") -> "youtube"
+                pkg.contains("tiktok") || pkg.contains("musically") -> "tiktok"
+                isSystem -> "system"
+                else -> "user"
+            }
+
             result.add(
                 SelectableApp(
                     packageName = pkg,
-                    appName = info.first,
-                    category = info.second,
-                    isInstalled = isInstalled,
+                    appName = if (label.isNotBlank()) label else pkg,
+                    category = category,
+                    isInstalled = true,
+                    isSystemApp = isSystem,
                     isSelected = selected.contains(pkg)
                 )
             )
         }
-        return result
+
+        // Sort: Aplikasi terpilih di atas, lalu user apps, lalu system apps
+        return result.sortedWith(
+            compareByDescending<SelectableApp> { it.isSelected }
+                .thenBy { it.isSystemApp }
+                .thenBy { it.appName.lowercase(Locale.getDefault()) }
+        )
+    }
+
+    fun unselectAllApps(context: Context) {
+        setBlackholePackages(context, emptySet())
+    }
+
+    fun resetToDefaultApps(context: Context) {
+        setBlackholePackages(context, DEFAULT_BLACKHOLE_APPS)
     }
 
     fun isBatteryOptimizationIgnored(context: Context): Boolean {

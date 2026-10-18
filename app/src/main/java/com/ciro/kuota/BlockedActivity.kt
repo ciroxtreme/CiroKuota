@@ -2,7 +2,9 @@ package com.ciro.kuota
 
 import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
@@ -13,12 +15,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -31,14 +35,32 @@ class BlockedActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Cegah bypass dengan tombol Back fisik / gesture
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_HOME)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                startActivity(homeIntent)
+                finish()
+            }
+        })
+
         val appName = intent.getStringExtra("EXTRA_APP_NAME") ?: "Aplikasi Target"
         val reason = intent.getStringExtra("EXTRA_REASON") ?: "Batas kuota atau sesi waktu telah habis."
 
         setContent {
+            val context = LocalContext.current
+            var showChallengeDialog by remember { mutableStateOf(false) }
+            val secretKey = remember { TotpHelper.getOrCreateSecret(context) }
+            val isTotpConfigured = remember { TotpHelper.isConfigured(context) }
+
             CiroKuotaTheme(darkTheme = true) {
                 BlockedScreen(
                     targetApp = appName,
                     reason = reason,
+                    isTotpConfigured = isTotpConfigured,
                     onGoHome = {
                         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                             addCategory(Intent.CATEGORY_HOME)
@@ -53,8 +75,36 @@ class BlockedActivity : ComponentActivity() {
                         }
                         startActivity(mainIntent)
                         finish()
+                    },
+                    onStartChallenge = {
+                        if (isTotpConfigured) {
+                            showChallengeDialog = true
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Setup Google Authenticator di CiroKuota belum aktif!",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
                 )
+
+                if (showChallengeDialog) {
+                    DarkSoulsUnlockDialog(
+                        secretKey = secretKey,
+                        onDismiss = { showChallengeDialog = false },
+                        onSuccess = {
+                            showChallengeDialog = false
+                            QuotaManager.grantTemporaryPass(context, 15 * 60 * 1000L)
+                            Toast.makeText(
+                                context,
+                                "🔥 TANTANGAN DITAKLUKKAN! Akses dibuka sementara selama 15 menit.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            finish()
+                        }
+                    )
+                }
             }
         }
     }
@@ -64,8 +114,10 @@ class BlockedActivity : ComponentActivity() {
 fun BlockedScreen(
     targetApp: String,
     reason: String,
+    isTotpConfigured: Boolean,
     onGoHome: () -> Unit,
-    onOpenApp: () -> Unit
+    onOpenApp: () -> Unit,
+    onStartChallenge: () -> Unit
 ) {
     Scaffold(
         containerColor = DarkBg
@@ -146,7 +198,34 @@ fun BlockedScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(28.dp))
+
+            // Action: Tantangan Neraka (Emergency Unlock) jika TOTP sudah dikonfigurasi
+            if (isTotpConfigured) {
+                Button(
+                    onClick = onStartChallenge,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AccentRed.copy(alpha = 0.2f),
+                        contentColor = AccentRed
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, AccentRed)
+                ) {
+                    Icon(imageVector = Icons.Default.Whatshot, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Buka Darurat 15m (Tantangan Neraka)",
+                        fontFamily = PoppinsFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.5.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             // Action: Go to Home
             Button(
@@ -170,7 +249,7 @@ fun BlockedScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Action: Open CiroKuota Dashboard
             OutlinedButton(
