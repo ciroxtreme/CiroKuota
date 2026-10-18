@@ -1,0 +1,13 @@
+{
+  "name": "CiroKuota",
+  "description": "Minimalist Wi-Fi Quota Saver & Habit Blocker for Tuan Ciro",
+  "version": "1.0",
+  "package": "com.ciro.kuota",
+  "features": [
+    "Wi-Fi Quota Budgeting",
+    "Local VPN Killswitch",
+    "DNS Family Shield 1.1.1.3",
+    "AppLock Instagram & Browser",
+    "Real-time Usage Tracker"
+  ]
+}

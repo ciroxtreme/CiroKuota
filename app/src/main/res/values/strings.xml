@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">CiroKuota</string>
+    <string name="accessibility_service_description">Layanan proteksi CiroKuota untuk mendeteksi pembukaan aplikasi Instagram dan Browser agar dapat membatasi sesi dan menghemat kuota Wi-Fi Tuan Ciro.</string>
+</resources>
