@@ -497,20 +497,56 @@ fun CiroKuotaMainScreen(
                             Toast.makeText(context, "Aplikasi target dikunci ketat!", Toast.LENGTH_SHORT).show()
                         },
                         onToggleStrictMath = {
-                            isStrictMath = !isStrictMath
-                            QuotaManager.setStrictMathActive(context, isStrictMath)
+                            val targetState = !isStrictMath
+                            commitmentDialogTitle = if (targetState) "AKTIFKAN TANTANGAN MATEMATIKA" else "NONAKTIFKAN TANTANGAN MATEMATIKA"
+                            commitmentDialogDesc = if (targetState) {
+                                "Anda akan mewajibkan tantangan matematika acak setiap kali membuka gembok ketat."
+                            } else {
+                                "Anda akan mematikan tantangan matematika pada gembok ketat."
+                            }
+                            pendingCommitmentAction = {
+                                isStrictMath = targetState
+                                QuotaManager.setStrictMathActive(context, targetState)
+                            }
                         },
                         onToggleStrictTotp = {
-                            isStrictTotp = !isStrictTotp
-                            QuotaManager.setStrictTotpActive(context, isStrictTotp)
+                            val targetState = !isStrictTotp
+                            commitmentDialogTitle = if (targetState) "AKTIFKAN GOOGLE AUTHENTICATOR (TOTP)" else "NONAKTIFKAN GOOGLE AUTHENTICATOR (TOTP)"
+                            commitmentDialogDesc = if (targetState) {
+                                "Anda akan mewajibkan verifikasi kode 2FA Authenticator setiap kali membuka gembok ketat."
+                            } else {
+                                "Anda akan mematikan verifikasi 2FA Authenticator pada gembok ketat."
+                            }
+                            pendingCommitmentAction = {
+                                isStrictTotp = targetState
+                                QuotaManager.setStrictTotpActive(context, targetState)
+                            }
                         },
                         onToggleStrictCharger = {
-                            isStrictCharger = !isStrictCharger
-                            QuotaManager.setStrictChargerActive(context, isStrictCharger)
+                            val targetState = !isStrictCharger
+                            commitmentDialogTitle = if (targetState) "AKTIFKAN WAJIB COLOK CHARGER" else "NONAKTIFKAN WAJIB COLOK CHARGER"
+                            commitmentDialogDesc = if (targetState) {
+                                "Anda akan mengunci gembok ketat sampai HP benar-benar dicolok ke casan/charger."
+                            } else {
+                                "Anda akan mematikan syarat colok charger pada gembok ketat."
+                            }
+                            pendingCommitmentAction = {
+                                isStrictCharger = targetState
+                                QuotaManager.setStrictChargerActive(context, targetState)
+                            }
                         },
                         onToggleStrictTimer = {
-                            isStrictTimer = !isStrictTimer
-                            QuotaManager.setStrictTimerActive(context, isStrictTimer)
+                            val targetState = !isStrictTimer
+                            commitmentDialogTitle = if (targetState) "AKTIFKAN GEMBOK TIMER TANPA KOMPROMI" else "NONAKTIFKAN GEMBOK TIMER TANPA KOMPROMI"
+                            commitmentDialogDesc = if (targetState) {
+                                "PERINGATAN: Bypass unlock akan dimatikan mutlak sampai countdown selesai!"
+                            } else {
+                                "Anda akan mematikan gembok timer tanpa kompromi."
+                            }
+                            pendingCommitmentAction = {
+                                isStrictTimer = targetState
+                                QuotaManager.setStrictTimerActive(context, targetState)
+                            }
                         },
                         onTryUnlock = {
                             if (isStrictTimer) {
@@ -2037,23 +2073,43 @@ fun TabSettingsScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "📜 Kalimat Ikrar Saat Ini (Hanya Lihat):",
+                            text = "📜 Kalimat Ikrar Saat Ini:",
                             fontFamily = PoppinsFontFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
-                            color = textPrimary
+                            color = textPrimary,
+                            modifier = Modifier.weight(1f)
                         )
 
-                        TextButton(
-                            onClick = {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = AccentBlue.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, AccentBlue.copy(alpha = 0.35f)),
+                            modifier = Modifier.clickable {
                                 editInputText = commitmentPhrase
                                 showEditPhraseDialog = true
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            }
                         ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp), tint = AccentBlue)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Ubah (24 Jam)", fontFamily = PoppinsFontFamily, fontSize = 11.sp, color = AccentBlue)
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(13.dp),
+                                    tint = AccentBlue
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = "Ubah (24 Jam)",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = AccentBlue,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
 
