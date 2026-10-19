@@ -115,6 +115,7 @@ class BlockedActivity : ComponentActivity() {
                         onSuccess = {
                             showChallengeDialog = false
                             QuotaManager.grantTemporaryPass(context, 15 * 60 * 1000L)
+                            QuotaManager.grantSettingsGuardBypass(context, 15 * 60 * 1000L)
                             Toast.makeText(
                                 context,
                                 "🔥 TANTANGAN DITAKLUKKAN! Akses dibuka sementara selama 15 menit.",

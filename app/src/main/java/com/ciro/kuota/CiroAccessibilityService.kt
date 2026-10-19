@@ -42,13 +42,23 @@ class CiroAccessibilityService : AccessibilityService() {
             }
 
             // 0. BENTENG PENGATURAN SISTEM (SETTINGS GUARD)
-            // Melindungi CiroKuota agar tidak dimatikan aksesibilitasnya atau dicabut Device Admin-nya
-            if (pkg == "com.android.settings" && !QuotaManager.isSettingsGuardBypassActive(applicationContext)) {
-                val root = try { rootInActiveWindow ?: event.source } catch (_: Throwable) { null }
-                if (scanForSettingsTampering(root)) {
-                    performGlobalAction(GLOBAL_ACTION_HOME)
-                    triggerBlock("Pengaturan Sistem", "🔒 Halaman Pengaturan CiroKuota dikunci demi keamanan! Gunakan Emergency Exit jika diperlukan.")
-                    return
+            // Melindungi CiroKuota agar pengaturan HP (Settings/Aksesibilitas/Device Admin) tidak diotak-atik
+            if (pkg == "com.android.settings") {
+                if (!QuotaManager.isSettingsGuardBypassActive(applicationContext)) {
+                    val isFullBlockActive = QuotaManager.isBlockSettingsActive(applicationContext)
+                    val root = try { rootInActiveWindow ?: event.source } catch (_: Throwable) { null }
+                    val isTampering = scanForSettingsTampering(root)
+
+                    if (isFullBlockActive || isTampering) {
+                        performGlobalAction(GLOBAL_ACTION_HOME)
+                        val blockMsg = if (isFullBlockActive) {
+                            "🔒 Aplikasi Pengaturan (Settings) dikunci demi menjaga komitmen! Gunakan Emergency Safe Exit jika ada keperluan mendesak."
+                        } else {
+                            "🔒 Halaman Pengaturan CiroKuota dikunci demi keamanan! Gunakan Emergency Safe Exit jika diperlukan."
+                        }
+                        triggerBlock("Pengaturan Sistem (Settings)", blockMsg)
+                        return
+                    }
                 }
             }
 
@@ -179,7 +189,7 @@ class CiroAccessibilityService : AccessibilityService() {
 
             val isKillswitch = QuotaManager.isKillswitchActive(applicationContext)
             val quotaStatus = QuotaManager.getQuotaStatus(applicationContext)
-            val isCondByKuota = QuotaManager.isCondByKuotaActive(applicationContext) && (QuotaManager.isAutoCutoffActive(applicationContext) && quotaStatus.isLimitReached)
+            val isCondByKuota = QuotaManager.isCondByKuotaActive(applicationContext) && quotaStatus.isLimitReached
             val manualUntil = QuotaManager.getManualLockUntil(applicationContext)
             val isManualLocked = manualUntil > now
 
@@ -215,7 +225,7 @@ class CiroAccessibilityService : AccessibilityService() {
                     reason = "📊 By Kuota App: Pemakaian $appName (${String.format(Locale.US, "%.1f", appUsageMb)} MB) telah mencapai batas budget (${appBudgetMb.toInt()} MB)!"
                 }
                 isCondByKuota -> {
-                    reason = "📊 By Kuota HP: Budget Kuota Wi-Fi Total (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName dihentikan otomatis."
+                    reason = "📊 By Kuota Utama: Budget Total Kuota Internet HP (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName diblokir otomatis."
                 }
                 isCondByTime -> {
                     reason = "🕒 By Time: $appName sedang berada di dalam jadwal jam gembok / tidur."

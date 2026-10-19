@@ -657,19 +657,39 @@ object QuotaManager {
     }
 
     fun getWifiUsageToday(context: Context): Long {
+        var totalBytes = 0L
         if (hasUsageStatsPermission(context)) {
             try {
                 val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
                 if (nsm != null) {
                     val startTime = getMidnightTimestamp()
                     val endTime = System.currentTimeMillis()
-                    val bucket = nsm.querySummaryForDevice(
-                        ConnectivityManager.TYPE_WIFI,
-                        null,
-                        startTime,
-                        endTime
-                    )
-                    return bucket.rxBytes + bucket.txBytes
+
+                    // 1. Wi-Fi
+                    try {
+                        val wifiBucket = nsm.querySummaryForDevice(
+                            ConnectivityManager.TYPE_WIFI,
+                            null,
+                            startTime,
+                            endTime
+                        )
+                        totalBytes += (wifiBucket.rxBytes + wifiBucket.txBytes)
+                    } catch (_: Exception) {}
+
+                    // 2. Mobile Data
+                    try {
+                        val mobileBucket = nsm.querySummaryForDevice(
+                            ConnectivityManager.TYPE_MOBILE,
+                            null,
+                            startTime,
+                            endTime
+                        )
+                        totalBytes += (mobileBucket.rxBytes + mobileBucket.txBytes)
+                    } catch (_: Exception) {}
+
+                    if (totalBytes > 0L) {
+                        return totalBytes
+                    }
                 }
             } catch (_: Exception) {}
         }
@@ -860,4 +880,10 @@ object QuotaManager {
     fun isSettingsGuardBypassActive(context: Context): Boolean {
         return getPrefs(context).getLong(KEY_SETTINGS_GUARD_BYPASS_UNTIL, 0L) > System.currentTimeMillis()
     }
+
+    // Blokir Akses ke Pengaturan HP (Settings App Lock)
+    private const val KEY_BLOCK_SETTINGS_APP = "block_settings_app_active"
+    fun isBlockSettingsActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_BLOCK_SETTINGS_APP, true)
+    fun setBlockSettingsActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_BLOCK_SETTINGS_APP, active).apply()
 }
+

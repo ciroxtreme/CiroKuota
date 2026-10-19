@@ -125,6 +125,8 @@ fun CiroKuotaMainScreen(
     var showTimePickerDialog by remember { mutableStateOf(false) }
     var showStrictUnlockDialog by remember { mutableStateOf(false) }
 
+    var isBlockSettingsApp by remember { mutableStateOf(QuotaManager.isBlockSettingsActive(context)) }
+
     // State Verifikasi Komitmen (Anti-Khilaf)
     var pendingCommitmentAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var commitmentDialogTitle by remember { mutableStateOf("") }
@@ -584,6 +586,7 @@ fun CiroKuotaMainScreen(
                         hasUsagePerm = hasUsagePerm,
                         isBatteryIgnored = isBatteryIgnored,
                         isAdminActive = isAdminActive,
+                        isBlockSettingsApp = isBlockSettingsApp,
                         cardColor = cardColor,
                         cardBorder = cardBorder,
                         textPrimary = textPrimary,
@@ -597,6 +600,21 @@ fun CiroKuotaMainScreen(
                                 )
                             }
                             context.startActivity(intent)
+                        },
+                        onToggleBlockSettings = {
+                            if (isBlockSettingsApp) {
+                                commitmentDialogTitle = "MATIKAN BLOKIR APP SETTINGS"
+                                commitmentDialogDesc = "Anda akan mematikan pemblokir otomatis aplikasi Pengaturan HP. Pastikan Anda tidak tergoda untuk mematikan Aksesibilitas atau mencabut Device Admin secara diam-diam!"
+                                pendingCommitmentAction = {
+                                    isBlockSettingsApp = false
+                                    QuotaManager.setBlockSettingsActive(context, false)
+                                    Toast.makeText(context, "Blokir App Settings Dimatikan.", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                isBlockSettingsApp = true
+                                QuotaManager.setBlockSettingsActive(context, true)
+                                Toast.makeText(context, "🛡️ Blokir Total App Settings Aktif!", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         onEmergencyExit = {
                             commitmentDialogTitle = "EMERGENCY SAFE EXIT"
@@ -1173,6 +1191,24 @@ fun TabSchedulesScreen(
                     )
 
                     if (isCondByAppQuota) {
+                        var showCustomAppBudgetDialog by remember { mutableStateOf(false) }
+
+                        if (showCustomAppBudgetDialog) {
+                            SetBudgetCustomDialog(
+                                initialBudgetMb = appQuotaBudgetMb,
+                                title = "Atur Budget Fleksibel (Per Aplikasi)",
+                                cardBg = cardColor,
+                                cardBorder = cardBorder,
+                                textPrimary = textPrimary,
+                                textSecondary = textSecondary,
+                                onDismiss = { showCustomAppBudgetDialog = false },
+                                onConfirm = { mb ->
+                                    onAppQuotaBudgetChange(mb)
+                                    showCustomAppBudgetDialog = false
+                                }
+                            )
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1186,6 +1222,36 @@ fun TabSchedulesScreen(
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     onAppQuotaBudgetChange(mb)
+                                }
+                            }
+                            // Custom button
+                            Box(
+                                modifier = Modifier
+                                    .weight(0.9f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (appQuotaBudgetMb !in listOf(100f, 250f, 500f, 750f, 1024f)) AccentAmber.copy(alpha = 0.2f) else Color.Transparent)
+                                    .border(1.dp, if (appQuotaBudgetMb !in listOf(100f, 250f, 500f, 750f, 1024f)) AccentAmber else cardBorder, RoundedCornerShape(8.dp))
+                                    .clickable { showCustomAppBudgetDialog = true }
+                                    .padding(vertical = 7.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = null,
+                                        tint = if (appQuotaBudgetMb !in listOf(100f, 250f, 500f, 750f, 1024f)) AccentAmber else textSecondary,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                    Text(
+                                        text = "Custom",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = if (appQuotaBudgetMb !in listOf(100f, 250f, 500f, 750f, 1024f)) AccentAmber else textSecondary
+                                    )
                                 }
                             }
                         }
@@ -1925,11 +1991,13 @@ fun TabSettingsScreen(
     hasUsagePerm: Boolean,
     isBatteryIgnored: Boolean,
     isAdminActive: Boolean,
+    isBlockSettingsApp: Boolean,
     cardColor: Color,
     cardBorder: Color,
     textPrimary: Color,
     textSecondary: Color,
     onActivateAdmin: () -> Unit,
+    onToggleBlockSettings: () -> Unit,
     onEmergencyExit: () -> Unit
 ) {
     val context = LocalContext.current
@@ -2030,6 +2098,20 @@ fun TabSettingsScreen(
                         }
                     }
                 }
+
+                // Saklar Blokir App Pengaturan HP (Settings App)
+                QuickSwitchCard(
+                    title = "🔒 Kunci Total Aplikasi Pengaturan (Settings)",
+                    subtitle = "Mencegah akses ke Pengaturan HP agar Aksesibilitas tidak bisa diutak-atik (Buka via Emergency Exit)",
+                    icon = Icons.Default.Lock,
+                    isActive = isBlockSettingsApp,
+                    activeColor = AccentRed,
+                    cardBg = cardColor,
+                    cardBorder = cardBorder,
+                    textPrimary = textPrimary,
+                    textSecondary = textSecondary,
+                    onToggle = onToggleBlockSettings
+                )
 
                 // Izin Aksesibilitas
                 PermissionStatusCard(
@@ -3287,6 +3369,145 @@ fun CommitmentVerificationDialog(
     )
 }
 
+// Dialog Input Custom Budget
+@Composable
+fun SetBudgetCustomDialog(
+    initialBudgetMb: Float,
+    title: String,
+    cardBg: Color,
+    cardBorder: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onDismiss: () -> Unit,
+    onConfirm: (Float) -> Unit
+) {
+    var textInput by remember { mutableStateOf(if (initialBudgetMb > 0) initialBudgetMb.toInt().toString() else "1024") }
+    var selectedUnit by remember { mutableStateOf(if (initialBudgetMb >= 1024f && initialBudgetMb % 1024f == 0f) "GB" else "MB") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = title,
+                fontFamily = PoppinsFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                color = textPrimary
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "Tentukan batas jatah kuota secara fleksibel sesuai paket atau kebutuhan Anda:",
+                    fontFamily = PoppinsFontFamily,
+                    fontSize = 12.sp,
+                    color = textSecondary
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = textInput,
+                        onValueChange = {
+                            textInput = it.filter { char -> char.isDigit() }
+                            errorMessage = null
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        placeholder = { Text("Contoh: 500 atau 2") },
+                        modifier = Modifier.weight(1f),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AccentBlue,
+                            unfocusedBorderColor = cardBorder
+                        )
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("MB", "GB").forEach { unit ->
+                            val isSelected = selectedUnit == unit
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) AccentBlue else Color.Transparent)
+                                    .border(1.dp, if (isSelected) AccentBlue else cardBorder, RoundedCornerShape(8.dp))
+                                    .clickable { selectedUnit = unit }
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = unit,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = if (isSelected) PureWhite else textPrimary
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage!!,
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 11.sp,
+                        color = AccentRed
+                    )
+                }
+
+                // Preset Cepat
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    val presets = if (selectedUnit == "GB") listOf("1", "2", "3", "5") else listOf("250", "500", "750", "1500")
+                    presets.forEach { preset ->
+                        OutlinedButton(
+                            onClick = { textInput = preset },
+                            modifier = Modifier.weight(1f).height(32.dp),
+                            contentPadding = PaddingValues(0.dp),
+                            border = BorderStroke(1.dp, cardBorder)
+                        ) {
+                            Text(
+                                text = "$preset$selectedUnit",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontSize = 10.sp,
+                                color = textSecondary
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val parsed = textInput.toFloatOrNull()
+                    if (parsed == null || parsed <= 0f) {
+                        errorMessage = "Masukkan angka budget yang valid (> 0)!"
+                        return@Button
+                    }
+                    val mbVal = if (selectedUnit == "GB") parsed * 1024f else parsed
+                    onConfirm(mbVal)
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+            ) {
+                Text("Simpan", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.Bold, color = PureWhite)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Batal", fontFamily = PoppinsFontFamily, color = textSecondary)
+            }
+        }
+    )
+}
+
 // ================= REUSABLE UI COMPONENTS =================
 @Composable
 fun HeroQuotaCard(
@@ -3300,11 +3521,28 @@ fun HeroQuotaCard(
     val usedBytes = status.totalWifiBytesToday
     val budgetBytes = (status.budgetMb * 1024 * 1024).toLong()
     val remainingBytes = (budgetBytes - usedBytes).coerceAtLeast(0L)
+    var showCustomBudgetDialog by remember { mutableStateOf(false) }
 
     val progressColor = when {
         status.percentUsed >= 90f -> AccentRed
         status.percentUsed >= 70f -> AccentAmber
         else -> AccentGreen
+    }
+
+    if (showCustomBudgetDialog) {
+        SetBudgetCustomDialog(
+            initialBudgetMb = status.budgetMb,
+            title = "Atur Budget Fleksibel (Total HP)",
+            cardBg = cardBg,
+            cardBorder = cardBorder,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            onDismiss = { showCustomBudgetDialog = false },
+            onConfirm = { mb ->
+                onSelectBudget(mb)
+                showCustomBudgetDialog = false
+            }
+        )
     }
 
     Surface(
@@ -3323,7 +3561,7 @@ fun HeroQuotaCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "KUOTA WI-FI HARI INI",
+                    text = "KUOTA TOTAL HARI INI",
                     fontFamily = JetBrainsMonoFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp,
@@ -3374,12 +3612,26 @@ fun HeroQuotaCard(
             )
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "Atur Jatah Budget Harian:",
-                    fontFamily = PoppinsFontFamily,
-                    fontSize = 11.sp,
-                    color = textSecondary
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Atur Jatah Budget Harian:",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 11.sp,
+                        color = textSecondary
+                    )
+                    Text(
+                        text = "Custom",
+                        fontFamily = PoppinsFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = AccentBlue,
+                        modifier = Modifier.clickable { showCustomBudgetDialog = true }
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -3411,6 +3663,24 @@ fun HeroQuotaCard(
                                 color = if (isSelected) cardBg else textPrimary
                             )
                         }
+                    }
+                    // Tombol Edit Custom
+                    Box(
+                        modifier = Modifier
+                            .weight(0.8f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (status.budgetMb !in listOf(1024f, 1536f, 2048f, 3072f)) AccentBlue.copy(alpha = 0.2f) else Color.Transparent)
+                            .border(1.dp, if (status.budgetMb !in listOf(1024f, 1536f, 2048f, 3072f)) AccentBlue else cardBorder, RoundedCornerShape(8.dp))
+                            .clickable { showCustomBudgetDialog = true }
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit Custom Budget",
+                            tint = if (status.budgetMb !in listOf(1024f, 1536f, 2048f, 3072f)) AccentBlue else textSecondary,
+                            modifier = Modifier.size(14.dp)
+                        )
                     }
                 }
             }
