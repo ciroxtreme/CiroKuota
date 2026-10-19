@@ -508,6 +508,10 @@ object QuotaManager {
     private const val KEY_STRICT_TOTP = "strict_totp_active"
     private const val KEY_STRICT_CHARGER = "strict_charger_active"
     private const val KEY_STRICT_TIMER = "strict_timer_active"
+    private const val KEY_STRICT_PHRASE = "strict_phrase_active"
+
+    fun isStrictPhraseActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_STRICT_PHRASE, true)
+    fun setStrictPhraseActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_STRICT_PHRASE, active).apply()
 
     fun isStrictMathActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_STRICT_MATH, true)
     fun setStrictMathActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_STRICT_MATH, active).apply()

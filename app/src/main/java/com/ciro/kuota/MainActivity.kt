@@ -112,6 +112,7 @@ fun CiroKuotaMainScreen(
 
     // State Tab 3: Strict Mode
     var manualLockUntil by remember { mutableStateOf(QuotaManager.getManualLockUntil(context)) }
+    var isStrictPhrase by remember { mutableStateOf(QuotaManager.isStrictPhraseActive(context)) }
     var isStrictMath by remember { mutableStateOf(QuotaManager.isStrictMathActive(context)) }
     var isStrictTotp by remember { mutableStateOf(QuotaManager.isStrictTotpActive(context)) }
     var isStrictCharger by remember { mutableStateOf(QuotaManager.isStrictChargerActive(context)) }
@@ -481,6 +482,7 @@ fun CiroKuotaMainScreen(
                         isDark = isDark,
                         manualLockUntil = manualLockUntil,
                         appCount = appBlockPackages.size,
+                        isStrictPhrase = isStrictPhrase,
                         isStrictMath = isStrictMath,
                         isStrictTotp = isStrictTotp,
                         isStrictCharger = isStrictCharger,
@@ -495,6 +497,19 @@ fun CiroKuotaMainScreen(
                             manualLockUntil = until
                             QuotaManager.setManualLockUntil(context, until)
                             Toast.makeText(context, "Aplikasi target dikunci ketat!", Toast.LENGTH_SHORT).show()
+                        },
+                        onToggleStrictPhrase = {
+                            val targetState = !isStrictPhrase
+                            commitmentDialogTitle = if (targetState) "AKTIFKAN TANTANGAN KATA-KATA IKRAR" else "NONAKTIFKAN TANTANGAN KATA-KATA IKRAR"
+                            commitmentDialogDesc = if (targetState) {
+                                "Anda akan mewajibkan pengetikan kalimat ikrar setiap kali membuka gembok ketat."
+                            } else {
+                                "Anda akan mematikan syarat mengetik kalimat ikrar pada gembok ketat."
+                            }
+                            pendingCommitmentAction = {
+                                isStrictPhrase = targetState
+                                QuotaManager.setStrictPhraseActive(context, targetState)
+                            }
                         },
                         onToggleStrictMath = {
                             val targetState = !isStrictMath
@@ -1450,6 +1465,7 @@ fun TabStrictModeScreen(
     isDark: Boolean,
     manualLockUntil: Long,
     appCount: Int,
+    isStrictPhrase: Boolean,
     isStrictMath: Boolean,
     isStrictTotp: Boolean,
     isStrictCharger: Boolean,
@@ -1460,6 +1476,7 @@ fun TabStrictModeScreen(
     textPrimary: Color,
     textSecondary: Color,
     onSetManualLock: (Long) -> Unit,
+    onToggleStrictPhrase: () -> Unit,
     onToggleStrictMath: () -> Unit,
     onToggleStrictTotp: () -> Unit,
     onToggleStrictCharger: () -> Unit,
@@ -1646,7 +1663,21 @@ fun TabStrictModeScreen(
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // 1. Tantangan Matematika
+                // 1. Tantangan Kata-kata / Kalimat Ikrar
+                QuickSwitchCard(
+                    title = "📜 Tantangan Kata-Kata / Teks Ikrar",
+                    subtitle = "Wajib mengetik kalimat komitmen penuh tanpa typo untuk rem kesadaran",
+                    icon = Icons.Default.Description,
+                    isActive = isStrictPhrase,
+                    activeColor = AccentOrange,
+                    cardBg = cardColor,
+                    cardBorder = cardBorder,
+                    textPrimary = textPrimary,
+                    textSecondary = textSecondary,
+                    onToggle = onToggleStrictPhrase
+                )
+
+                // 2. Tantangan Matematika
                 QuickSwitchCard(
                     title = "🧩 Tantangan Matematika (Dark Souls)",
                     subtitle = "Soal penjumlahan acak mengaktifkan otak rasional",
@@ -1660,7 +1691,7 @@ fun TabStrictModeScreen(
                     onToggle = onToggleStrictMath
                 )
 
-                // 2. Google Authenticator Reseh (TOTP)
+                // 3. Google Authenticator Reseh (TOTP)
                 QuickSwitchCard(
                     title = "🚨 Google Authenticator Reseh (TOTP)",
                     subtitle = "Wajib masukkan 6 digit token dari Authenticator dalam 15 detik",
@@ -2852,10 +2883,15 @@ fun DarkSoulsUnlockDialog(
     onSuccess: () -> Unit
 ) {
     val context = LocalContext.current
+    val isPhraseRequired = QuotaManager.isStrictPhraseActive(context)
     val isMathRequired = QuotaManager.isStrictMathActive(context)
     val isTotpRequired = QuotaManager.isStrictTotpActive(context)
     val isChargerRequired = QuotaManager.isStrictChargerActive(context)
     val isPlugged = QuotaManager.isDeviceCharging(context)
+
+    val commitmentPhrase = remember { QuotaManager.getCommitmentPhrase(context) }
+    var phraseInput by remember { mutableStateOf("") }
+    var isPhraseSolved by remember { mutableStateOf(!isPhraseRequired) }
 
     var num1 by remember { mutableStateOf(Random.nextInt(25, 75)) }
     var num2 by remember { mutableStateOf(Random.nextInt(15, 60)) }
@@ -2878,8 +2914,8 @@ fun DarkSoulsUnlockDialog(
         }
     }
 
-    LaunchedEffect(isMathSolved) {
-        if (isMathSolved && isTotpRequired) {
+    LaunchedEffect(isPhraseSolved, isMathSolved) {
+        if (isPhraseSolved && isMathSolved && isTotpRequired) {
             secondsLeft = difficultySeconds
             while (secondsLeft > 0 && !isFailed) {
                 delay(1000)
@@ -2924,9 +2960,73 @@ fun DarkSoulsUnlockDialog(
                         color = AccentRed,
                         lineHeight = 18.sp
                     )
+                } else if (isPhraseRequired && !isPhraseSolved) {
+                    Text(
+                        text = "📜 Ronde 1: Ketik kalimat ikrar komitmen dengan presisi (tanpa copy-paste):",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF1E1E1E),
+                        border = BorderStroke(1.dp, AccentOrange.copy(alpha = 0.5f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "\"$commitmentPhrase\"",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 12.sp,
+                            color = AccentOrange,
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = phraseInput,
+                        onValueChange = { phraseInput = it },
+                        placeholder = { Text("Ketik ulang kalimat di atas...", fontSize = 11.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 3
+                    )
+
+                    val isPhraseMatch = phraseInput.trim() == commitmentPhrase.trim()
+
+                    Button(
+                        onClick = {
+                            if (isPhraseMatch) {
+                                isPhraseSolved = true
+                                if (!isMathRequired && !isTotpRequired) {
+                                    onSuccess()
+                                } else {
+                                    Toast.makeText(context, "Kalimat ikrar cocok! Melanjutkan...", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Toast.makeText(context, "Kalimat belum persis sama!", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        enabled = isPhraseMatch,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AccentOrange,
+                            disabledContainerColor = Color.DarkGray
+                        )
+                    ) {
+                        Text(
+                            text = when {
+                                isMathRequired -> "Lanjut ke Soal Matematika"
+                                isTotpRequired -> "Lanjut ke Authenticator"
+                                else -> "Buka Kunci Sekarang"
+                            },
+                            fontWeight = FontWeight.Bold,
+                            color = if (isPhraseMatch) Color.White else Color.Gray
+                        )
+                    }
                 } else if (isMathRequired && !isMathSolved) {
                     Text(
-                        text = "Ronde 1: Selesaikan soal matematika untuk mengaktifkan otak rasional:",
+                        text = if (isPhraseRequired) "🧩 Ronde 2: Selesaikan soal matematika otak rasional:" else "Ronde 1: Selesaikan soal matematika untuk mengaktifkan otak rasional:",
                         fontFamily = PoppinsFontFamily,
                         fontSize = 12.sp,
                         color = Color.White
