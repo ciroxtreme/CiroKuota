@@ -790,4 +790,70 @@ object QuotaManager {
             else -> String.format(Locale.US, "%.0f KB", kb)
         }
     }
+
+    // ========================================================
+    // BENTENG BAJA: KALIMAT KOMITMEN & 24H EDIT COOLDOWN
+    // ========================================================
+    const val DEFAULT_COMMITMENT_PHRASE = "Aku tidak menyesali kehilangan kuota 1gb dan siap bertanggung jawab"
+    private const val KEY_COMMITMENT_PHRASE = "commitment_phrase_text"
+    private const val KEY_PENDING_COMMITMENT = "pending_commitment_phrase"
+    private const val KEY_PENDING_COMMITMENT_TIME = "pending_commitment_time"
+    private const val KEY_SETTINGS_GUARD_BYPASS_UNTIL = "settings_guard_bypass_until"
+
+    fun getCommitmentPhrase(context: Context): String {
+        applyPendingCommitmentIfReady(context)
+        return getPrefs(context).getString(KEY_COMMITMENT_PHRASE, DEFAULT_COMMITMENT_PHRASE) ?: DEFAULT_COMMITMENT_PHRASE
+    }
+
+    fun requestChangeCommitmentPhrase(context: Context, newPhrase: String) {
+        val trimmed = newPhrase.trim()
+        if (trimmed.isEmpty()) return
+        val now = System.currentTimeMillis()
+        getPrefs(context).edit()
+            .putString(KEY_PENDING_COMMITMENT, trimmed)
+            .putLong(KEY_PENDING_COMMITMENT_TIME, now)
+            .apply()
+    }
+
+    fun getPendingCommitmentPhrase(context: Context): String? {
+        applyPendingCommitmentIfReady(context)
+        return getPrefs(context).getString(KEY_PENDING_COMMITMENT, null)
+    }
+
+    fun getPendingCommitmentApplyTime(context: Context): Long {
+        val reqTime = getPrefs(context).getLong(KEY_PENDING_COMMITMENT_TIME, 0L)
+        if (reqTime <= 0L) return 0L
+        return reqTime + (24L * 60L * 60L * 1000L) // 24 Jam
+    }
+
+    fun applyPendingCommitmentIfReady(context: Context) {
+        val pending = getPrefs(context).getString(KEY_PENDING_COMMITMENT, null) ?: return
+        val reqTime = getPrefs(context).getLong(KEY_PENDING_COMMITMENT_TIME, 0L)
+        if (reqTime <= 0L) return
+        val cooldownMs = 24L * 60L * 60L * 1000L
+        if (System.currentTimeMillis() - reqTime >= cooldownMs) {
+            getPrefs(context).edit()
+                .putString(KEY_COMMITMENT_PHRASE, pending)
+                .remove(KEY_PENDING_COMMITMENT)
+                .remove(KEY_PENDING_COMMITMENT_TIME)
+                .apply()
+        }
+    }
+
+    fun cancelPendingCommitment(context: Context) {
+        getPrefs(context).edit()
+            .remove(KEY_PENDING_COMMITMENT)
+            .remove(KEY_PENDING_COMMITMENT_TIME)
+            .apply()
+    }
+
+    // Temporary Bypass untuk Settings Guard (Safe Exit / Maintenance)
+    fun grantSettingsGuardBypass(context: Context, durationMillis: Long = 10 * 60 * 1000L) {
+        val until = System.currentTimeMillis() + durationMillis
+        getPrefs(context).edit().putLong(KEY_SETTINGS_GUARD_BYPASS_UNTIL, until).apply()
+    }
+
+    fun isSettingsGuardBypassActive(context: Context): Boolean {
+        return getPrefs(context).getLong(KEY_SETTINGS_GUARD_BYPASS_UNTIL, 0L) > System.currentTimeMillis()
+    }
 }

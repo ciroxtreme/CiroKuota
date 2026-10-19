@@ -1,6 +1,8 @@
 package com.ciro.kuota
 
 import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -122,6 +124,16 @@ fun CiroKuotaMainScreen(
     var showTimePickerDialog by remember { mutableStateOf(false) }
     var showStrictUnlockDialog by remember { mutableStateOf(false) }
 
+    // State Verifikasi Komitmen (Anti-Khilaf)
+    var pendingCommitmentAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var commitmentDialogTitle by remember { mutableStateOf("") }
+    var commitmentDialogDesc by remember { mutableStateOf("") }
+
+    // State Device Admin
+    val dpm = remember { context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager }
+    val adminComponent = remember { ComponentName(context, CiroDeviceAdminReceiver::class.java) }
+    var isAdminActive by remember { mutableStateOf(dpm.isAdminActive(adminComponent)) }
+
     // State Data Pemakaian & Permissions
     var quotaStatus by remember { mutableStateOf(QuotaManager.getQuotaStatus(context)) }
     var topApps by remember { mutableStateOf(QuotaManager.getTopMonitoredAppsUsage(context)) }
@@ -167,6 +179,7 @@ fun CiroKuotaMainScreen(
             isBatteryIgnored = QuotaManager.isBatteryOptimizationIgnored(context)
             manualLockUntil = QuotaManager.getManualLockUntil(context)
             isCharging = QuotaManager.isDeviceCharging(context)
+            isAdminActive = dpm.isAdminActive(adminComponent)
             delay(3000)
         }
     }
@@ -327,10 +340,22 @@ fun CiroKuotaMainScreen(
                             Toast.makeText(context, if (isStopByKuota) "Stop by Kuota Usage Aktif!" else "Stop by Kuota Usage Mati", Toast.LENGTH_SHORT).show()
                         },
                         onToggleAdultFilter = {
-                            isAdultFilter = !isAdultFilter
-                            QuotaManager.setAdultFilterActive(context, isAdultFilter)
-                            if (isVpnFirewall) startVpnSafely()
-                            Toast.makeText(context, if (isAdultFilter) "🛡️ Pemblokir Situs Dewasa Aktif!" else "Pemblokir Situs Dewasa Dimatikan", Toast.LENGTH_SHORT).show()
+                            if (isAdultFilter) {
+                                // Mau mematikan filter: WAJIB verifikasi kalimat komitmen!
+                                commitmentDialogTitle = "KONFIRMASI MATIKAN FILTER DEWASA"
+                                commitmentDialogDesc = "Anda sedang mencoba mematikan pemblokir situs dewasa. Apakah Anda yakin ingin mematikan perlindungan ini?"
+                                pendingCommitmentAction = {
+                                    isAdultFilter = false
+                                    QuotaManager.setAdultFilterActive(context, false)
+                                    if (isVpnFirewall) startVpnSafely()
+                                    Toast.makeText(context, "Pemblokir Situs Dewasa Dimatikan", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                isAdultFilter = true
+                                QuotaManager.setAdultFilterActive(context, true)
+                                if (isVpnFirewall) startVpnSafely()
+                                Toast.makeText(context, "🛡️ Pemblokir Situs Dewasa Aktif!", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         onManageBlackholeApps = {
                             showBlackholePickerDialog = true
@@ -363,13 +388,29 @@ fun CiroKuotaMainScreen(
                             Toast.makeText(context, "Target disamakan dengan ${selectedBlackholeApps.size} aplikasi Blackhole!", Toast.LENGTH_SHORT).show()
                         },
                         onToggleCondByKuota = {
-                            isCondByKuota = !isCondByKuota
-                            QuotaManager.setCondByKuotaActive(context, isCondByKuota)
+                            if (isCondByKuota) {
+                                commitmentDialogTitle = "MATIKAN KONDISI BY KUOTA"
+                                commitmentDialogDesc = "Anda akan mematikan perlindungan pembatasan berdasarkan sisa kuota harian."
+                                pendingCommitmentAction = {
+                                    isCondByKuota = false
+                                    QuotaManager.setCondByKuotaActive(context, false)
+                                }
+                            } else {
+                                isCondByKuota = true
+                                QuotaManager.setCondByKuotaActive(context, true)
+                            }
                         },
                         onToggleCondByAppQuota = {
-                            isCondByAppQuota = !isCondByAppQuota
-                            QuotaManager.setCondByAppQuotaActive(context, isCondByAppQuota)
                             if (isCondByAppQuota) {
+                                commitmentDialogTitle = "MATIKAN BY KUOTA PER APP"
+                                commitmentDialogDesc = "Anda akan mematikan batas kuota per aplikasi (${appQuotaBudgetMb.toInt()} MB)."
+                                pendingCommitmentAction = {
+                                    isCondByAppQuota = false
+                                    QuotaManager.setCondByAppQuotaActive(context, false)
+                                }
+                            } else {
+                                isCondByAppQuota = true
+                                QuotaManager.setCondByAppQuotaActive(context, true)
                                 QuotaManager.resetAllAppQuotaBaselines(context)
                                 Toast.makeText(context, "By Kuota Aplikasi aktif! Kuota dihitung mulai dari 0 MB.", Toast.LENGTH_SHORT).show()
                             }
@@ -385,16 +426,43 @@ fun CiroKuotaMainScreen(
                             Toast.makeText(context, "🔄 Kuota aplikasi berhasil direset ke 0 MB!", Toast.LENGTH_SHORT).show()
                         },
                         onToggleCondByDuration = {
-                            isCondByDuration = !isCondByDuration
-                            QuotaManager.setCondByDurationActive(context, isCondByDuration)
+                            if (isCondByDuration) {
+                                commitmentDialogTitle = "MATIKAN BY DURATION"
+                                commitmentDialogDesc = "Anda akan mematikan pembatasan durasi sesi ($sessionLimitMin menit)."
+                                pendingCommitmentAction = {
+                                    isCondByDuration = false
+                                    QuotaManager.setCondByDurationActive(context, false)
+                                }
+                            } else {
+                                isCondByDuration = true
+                                QuotaManager.setCondByDurationActive(context, true)
+                            }
                         },
                         onToggleCondByTime = {
-                            isCondByTime = !isCondByTime
-                            QuotaManager.setCondByTimeActive(context, isCondByTime)
+                            if (isCondByTime) {
+                                commitmentDialogTitle = "MATIKAN BY TIME SCHEDULE"
+                                commitmentDialogDesc = "Anda akan mematikan gembok jadwal jam."
+                                pendingCommitmentAction = {
+                                    isCondByTime = false
+                                    QuotaManager.setCondByTimeActive(context, false)
+                                }
+                            } else {
+                                isCondByTime = true
+                                QuotaManager.setCondByTimeActive(context, true)
+                            }
                         },
                         onToggleCondByLaunch = {
-                            isCondByLaunch = !isCondByLaunch
-                            QuotaManager.setCondByLaunchActive(context, isCondByLaunch)
+                            if (isCondByLaunch) {
+                                commitmentDialogTitle = "MATIKAN BY LAUNCH COUNT"
+                                commitmentDialogDesc = "Anda akan mematikan batas buka aplikasi harian ($maxLaunches kali)."
+                                pendingCommitmentAction = {
+                                    isCondByLaunch = false
+                                    QuotaManager.setCondByLaunchActive(context, false)
+                                }
+                            } else {
+                                isCondByLaunch = true
+                                QuotaManager.setCondByLaunchActive(context, true)
+                            }
                         },
                         onSessionLimitChange = { min ->
                             sessionLimitMin = min
@@ -464,10 +532,39 @@ fun CiroKuotaMainScreen(
                         hasAccessPerm = hasAccessPerm,
                         hasUsagePerm = hasUsagePerm,
                         isBatteryIgnored = isBatteryIgnored,
+                        isAdminActive = isAdminActive,
                         cardColor = cardColor,
                         cardBorder = cardBorder,
                         textPrimary = textPrimary,
-                        textSecondary = textSecondary
+                        textSecondary = textSecondary,
+                        onActivateAdmin = {
+                            val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                                putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
+                                putExtra(
+                                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                                    "Aktifkan Device Admin agar aplikasi CiroKuota kebal dari uninstall mendadak saat fase relaps/khilaf."
+                                )
+                            }
+                            context.startActivity(intent)
+                        },
+                        onEmergencyExit = {
+                            commitmentDialogTitle = "EMERGENCY SAFE EXIT"
+                            commitmentDialogDesc = "Anda akan mencabut Device Admin dan membuka proteksi Settings selama 10 menit untuk keperluan maintenance/uninstall aman."
+                            pendingCommitmentAction = {
+                                try {
+                                    dpm.removeActiveAdmin(adminComponent)
+                                    isAdminActive = false
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                                QuotaManager.grantSettingsGuardBypass(context, 10 * 60 * 1000L)
+                                Toast.makeText(
+                                    context,
+                                    "Safe Exit Aktif! Device Admin dicabut & Proteksi Settings dibuka selama 10 menit.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
                     )
                 }
             }
@@ -514,10 +611,39 @@ fun CiroKuotaMainScreen(
             textPrimary = textPrimary,
             textSecondary = textSecondary,
             onTogglePackage = { pkg ->
-                QuotaManager.toggleAppBlockPackage(context, pkg)
-                appBlockPackages = QuotaManager.getAppBlockPackages(context)
+                val current = QuotaManager.getAppBlockPackages(context)
+                if (current.contains(pkg)) {
+                    // Mau meng-unlist/menghapus aplikasi target: WAJIB komitmen!
+                    commitmentDialogTitle = "UNLIST APLIKASI TERKUNCI"
+                    commitmentDialogDesc = "Anda akan menghapus aplikasi ini dari daftar proteksi. Apakah Anda yakin ingin melepas gembok aplikasi ini?"
+                    pendingCommitmentAction = {
+                        QuotaManager.toggleAppBlockPackage(context, pkg)
+                        appBlockPackages = QuotaManager.getAppBlockPackages(context)
+                        Toast.makeText(context, "Aplikasi dilepas dari pemantauan", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    // Menambah aplikasi baru: diperbolehkan langsung
+                    QuotaManager.toggleAppBlockPackage(context, pkg)
+                    appBlockPackages = QuotaManager.getAppBlockPackages(context)
+                }
             },
             onDismiss = { showAppBlockPickerDialog = false }
+        )
+    }
+
+    // Modal Dialog: Verifikasi Kalimat Komitmen (Anti-Khilaf)
+    if (pendingCommitmentAction != null) {
+        CommitmentVerificationDialog(
+            title = commitmentDialogTitle,
+            actionDesc = commitmentDialogDesc,
+            onDismiss = {
+                pendingCommitmentAction = null
+            },
+            onConfirmed = {
+                val action = pendingCommitmentAction
+                pendingCommitmentAction = null
+                action?.invoke()
+            }
         )
     }
 
@@ -1035,6 +1161,124 @@ fun TabSchedulesScreen(
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 11.sp
                                 )
+                            }
+                        }
+
+                        // DAFTAR STATUS SISA KUOTA PER APLIKASI
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = subtaskBgColor(isDark),
+                            border = BorderStroke(0.8.dp, cardBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "STATUS SISA KUOTA APLIKASI",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = AccentAmber
+                                    )
+                                    Text(
+                                        text = "Budget: ${appQuotaBudgetMb.toInt()} MB",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = 10.sp,
+                                        color = textSecondary
+                                    )
+                                }
+
+                                if (appBlockPackages.isEmpty()) {
+                                    Text(
+                                        text = "Belum ada aplikasi yang dipilih untuk dipantau.",
+                                        fontFamily = PoppinsFontFamily,
+                                        fontSize = 11.sp,
+                                        color = textSecondary
+                                    )
+                                } else {
+                                    val pm = context.packageManager
+                                    appBlockPackages.forEach { pkg ->
+                                        val appLabel = remember(pkg) {
+                                            try {
+                                                val info = pm.getApplicationInfo(pkg, 0)
+                                                pm.getApplicationLabel(info).toString()
+                                            } catch (_: Exception) {
+                                                pkg
+                                            }
+                                        }
+                                        val usedMb = QuotaManager.getAppMonitoredUsageMb(context, pkg)
+                                        val remainingMb = (appQuotaBudgetMb - usedMb).coerceAtLeast(0f)
+                                        val percentUsed = ((usedMb / appQuotaBudgetMb) * 100f).coerceIn(0f, 100f)
+                                        val isExceeded = usedMb >= appQuotaBudgetMb
+
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = appLabel,
+                                                    fontFamily = PoppinsFontFamily,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontSize = 11.5.sp,
+                                                    color = textPrimary,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Text(
+                                                    text = if (isExceeded) "HABIS (0 MB)" else "Sisa ${String.format(Locale.US, "%.1f", remainingMb)} MB",
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 10.5.sp,
+                                                    color = if (isExceeded) AccentRed else AccentGreen
+                                                )
+                                            }
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "Terpakai: ${String.format(Locale.US, "%.1f", usedMb)} MB (${String.format(Locale.US, "%.0f", percentUsed)}%)",
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontSize = 9.sp,
+                                                    color = textSecondary
+                                                )
+                                                if (isExceeded) {
+                                                    Text(
+                                                        text = "🔒 DIBLOKIR",
+                                                        fontFamily = JetBrainsMonoFontFamily,
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 9.sp,
+                                                        color = AccentRed
+                                                    )
+                                                }
+                                            }
+
+                                            LinearProgressIndicator(
+                                                progress = { (percentUsed / 100f).coerceIn(0f, 1f) },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(5.dp)
+                                                    .clip(RoundedCornerShape(3.dp)),
+                                                color = if (isExceeded) AccentRed else if (percentUsed > 75f) AccentAmber else AccentGreen,
+                                                trackColor = cardBorder.copy(alpha = 0.4f)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1613,22 +1857,41 @@ fun TabSettingsScreen(
     hasAccessPerm: Boolean,
     hasUsagePerm: Boolean,
     isBatteryIgnored: Boolean,
+    isAdminActive: Boolean,
     cardColor: Color,
     cardBorder: Color,
     textPrimary: Color,
-    textSecondary: Color
+    textSecondary: Color,
+    onActivateAdmin: () -> Unit,
+    onEmergencyExit: () -> Unit
 ) {
     val context = LocalContext.current
+    var commitmentPhrase by remember { mutableStateOf(QuotaManager.getCommitmentPhrase(context)) }
+    var pendingPhrase by remember { mutableStateOf(QuotaManager.getPendingCommitmentPhrase(context)) }
+    var pendingApplyTime by remember { mutableStateOf(QuotaManager.getPendingCommitmentApplyTime(context)) }
+    var showEditPhraseDialog by remember { mutableStateOf(false) }
+    var editInputText by remember { mutableStateOf("") }
+
+    // Update state pending timer
+    LaunchedEffect(Unit) {
+        while (true) {
+            commitmentPhrase = QuotaManager.getCommitmentPhrase(context)
+            pendingPhrase = QuotaManager.getPendingCommitmentPhrase(context)
+            pendingApplyTime = QuotaManager.getPendingCommitmentApplyTime(context)
+            delay(1000)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // --- 1. KEKEBALAN SISTEM & DEVICE ADMIN ---
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SectionHeader(title = "KEKEBALAN AKSEBILITAS (ANTI-LEPAS)", textSecondary = textSecondary)
+                SectionHeader(title = "KEKEBALAN SISTEM & ANTI-UNINSTALL", textSecondary = textSecondary)
                 Text(
-                    text = "Konfigurasi izin sistem Android agar CiroKuota kebal dari pembunuhan proses latar belakang oleh OS (MIUI, ColorOS, OneUI).",
+                    text = "Konfigurasi Device Admin dan izin sistem agar CiroKuota kebal dari uninstall mendadak serta tidak dimatikan paksa di Pengaturan.",
                     fontFamily = PoppinsFontFamily,
                     fontSize = 11.sp,
                     color = textSecondary
@@ -1638,6 +1901,84 @@ fun TabSettingsScreen(
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Device Admin Status Card
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = cardColor,
+                    border = BorderStroke(1.dp, if (isAdminActive) AccentGreen.copy(alpha = 0.5f) else AccentRed.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isAdminActive) AccentGreen.copy(alpha = 0.15f) else AccentRed.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (isAdminActive) Icons.Default.Security else Icons.Default.GppMaybe,
+                                    contentDescription = null,
+                                    tint = if (isAdminActive) AccentGreen else AccentRed,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Device Admin (Anti-Uninstall)",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = textPrimary
+                                )
+                                Text(
+                                    text = if (isAdminActive) "Aktif • Aplikasi dilindungi dari pencopotan pemasangan" else "Nonaktif • Sangat rentan di-uninstall saat relaps!",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontSize = 10.sp,
+                                    color = if (isAdminActive) AccentGreen else AccentRed
+                                )
+                            }
+                        }
+
+                        if (!isAdminActive) {
+                            Button(
+                                onClick = onActivateAdmin,
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text("Aktifkan", fontFamily = PoppinsFontFamily, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                // Izin Aksesibilitas
+                PermissionStatusCard(
+                    title = "Layanan Aksesibilitas CiroKuota",
+                    desc = "Wajib aktif untuk mendeteksi pembukaan aplikasi target & blokir situs terlarang",
+                    isGranted = hasAccessPerm,
+                    cardBg = cardColor,
+                    cardBorder = cardBorder,
+                    textPrimary = textPrimary,
+                    textSecondary = textSecondary,
+                    onClickAction = {
+                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        context.startActivity(intent)
+                    }
+                )
+
                 // Izin Bebas Baterai (Unrestricted)
                 PermissionStatusCard(
                     title = "Bebas dari Hemat Baterai (Anti-Kill)",
@@ -1654,21 +1995,6 @@ fun TabSettingsScreen(
                             }
                             context.startActivity(intent)
                         }
-                    }
-                )
-
-                // Izin Aksesibilitas
-                PermissionStatusCard(
-                    title = "Layanan Aksesibilitas CiroKuota",
-                    desc = "Wajib aktif untuk mendeteksi pembukaan aplikasi target & blokir situs terlarang",
-                    isGranted = hasAccessPerm,
-                    cardBg = cardColor,
-                    cardBorder = cardBorder,
-                    textPrimary = textPrimary,
-                    textSecondary = textSecondary,
-                    onClickAction = {
-                        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                        context.startActivity(intent)
                     }
                 )
 
@@ -1689,7 +2015,172 @@ fun TabSettingsScreen(
             }
         }
 
-        // Panduan Kunci di Recent Apps (Gembok)
+        // --- 2. BENTENG KOMITMEN & 24 JAM COOLDOWN ---
+        item {
+            SectionHeader(title = "KALIMAT IKRAR & COOLDOWN 24 JAM", textSecondary = textSecondary)
+        }
+
+        item {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = cardColor,
+                border = BorderStroke(1.dp, cardBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "📜 Kalimat Ikrar Saat Ini (Hanya Lihat):",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = textPrimary
+                        )
+
+                        TextButton(
+                            onClick = {
+                                editInputText = commitmentPhrase
+                                showEditPhraseDialog = true
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp), tint = AccentBlue)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Ubah (24 Jam)", fontFamily = PoppinsFontFamily, fontSize = 11.sp, color = AccentBlue)
+                        }
+                    }
+
+                    // Kalimat Aktif
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = (if (isDark) Color(0xFF1E293B) else Color(0xFFF1F5F9)),
+                        border = BorderStroke(1.dp, AccentOrange.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "\"$commitmentPhrase\"",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 12.sp,
+                            color = AccentOrange,
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+
+                    // Status Cooldown Pending jika ada
+                    if (pendingPhrase != null) {
+                        val diffMs = pendingApplyTime - System.currentTimeMillis()
+                        val hours = if (diffMs > 0) diffMs / (1000 * 60 * 60) else 0
+                        val minutes = if (diffMs > 0) (diffMs % (1000 * 60 * 60)) / (1000 * 60) else 0
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = AccentPurple.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, AccentPurple.copy(alpha = 0.4f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.HourglassTop, contentDescription = null, tint = AccentPurple, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Sedang Masa Cooldown (${hours}j ${minutes}m lagi)",
+                                        fontFamily = PoppinsFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        color = AccentPurple
+                                    )
+                                }
+                                Text(
+                                    text = "Permintaan ikrar baru: \"$pendingPhrase\"",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontSize = 10.sp,
+                                    color = textSecondary
+                                )
+                                OutlinedButton(
+                                    onClick = {
+                                        QuotaManager.cancelPendingCommitment(context)
+                                        pendingPhrase = null
+                                    },
+                                    modifier = Modifier.align(Alignment.End),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                ) {
+                                    Text("Batalkan Perubahan", fontFamily = PoppinsFontFamily, fontSize = 10.sp, color = AccentRed)
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "💡 Perubahan kalimat ikrar memerlukan masa tunggu (cooldown) 24 jam sebelum berlaku, agar Anda tidak bisa mempermudah kalimatnya saat sedang impulsif.",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 10.sp,
+                            color = textSecondary,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        // --- 3. EMERGENCY SAFE EXIT (PELINDUNG SEWAKTU-WAKTU JIKA NGEBUG) ---
+        item {
+            SectionHeader(title = "EMERGENCY SAFE EXIT (JIKA ADA BUG)", textSecondary = textSecondary)
+        }
+
+        item {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = cardColor,
+                border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.WarningAmber, contentDescription = null, tint = AccentRed, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Keluar Darurat & Buka Proteksi Settings",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = AccentRed
+                        )
+                    }
+
+                    Text(
+                        text = "Jika suatu saat aplikasi mengalami bug fatal atau Anda benar-benar butuh mencopot aplikasi: tombol ini akan mencabut Device Admin dan menonaktifkan proteksi anti-tamper Settings selama 10 menit.\n\nTetap diwajibkan mengetik kalimat ikrar penuh sebagai rem kesadaran.",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 11.sp,
+                        color = textSecondary,
+                        lineHeight = 15.sp
+                    )
+
+                    Button(
+                        onClick = onEmergencyExit,
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentRed),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.ExitToApp, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Buka Emergency Safe Exit", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+
+        // --- 4. Panduan Kunci di Recent Apps (Gembok) ---
         item {
             SectionHeader(title = "PANDUAN GEMBOK RECENT APPS", textSecondary = textSecondary)
         }
@@ -1724,6 +2215,59 @@ fun TabSettingsScreen(
         }
 
         item { Spacer(modifier = Modifier.height(20.dp)) }
+    }
+
+    // Dialog Pengajuan Perubahan Kalimat Ikrar (24h Cooldown)
+    if (showEditPhraseDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditPhraseDialog = false },
+            title = {
+                Text(
+                    text = "Ajukan Kalimat Ikrar Baru",
+                    fontFamily = PoppinsFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Kalimat ini baru akan aktif setelah masa cooldown 24 jam berjalan tanpa dibatalkan.",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 11.sp,
+                        color = textSecondary
+                    )
+                    OutlinedTextField(
+                        value = editInputText,
+                        onValueChange = { editInputText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Tulis kalimat ikrar baru...") },
+                        maxLines = 3
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (editInputText.isNotBlank()) {
+                            QuotaManager.requestChangeCommitmentPhrase(context, editInputText)
+                            pendingPhrase = QuotaManager.getPendingCommitmentPhrase(context)
+                            pendingApplyTime = QuotaManager.getPendingCommitmentApplyTime(context)
+                            showEditPhraseDialog = false
+                            Toast.makeText(context, "Permintaan ikrar disimpan! Aktif dalam 24 jam.", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AccentBlue)
+                ) {
+                    Text("Ajukan (Cooldown 24 Jam)")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditPhraseDialog = false }) {
+                    Text("Batal")
+                }
+            }
+        )
     }
 }
 
@@ -2465,6 +3009,123 @@ fun DarkSoulsUnlockDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text("Tutup", color = Color.LightGray)
+            }
+        }
+    )
+}
+
+// ================= DIALOG VERIFIKASI KALIMAT KOMITMEN (ANTI-KHILAF) =================
+@Composable
+fun CommitmentVerificationDialog(
+    title: String,
+    actionDesc: String,
+    onDismiss: () -> Unit,
+    onConfirmed: () -> Unit
+) {
+    val context = LocalContext.current
+    val requiredPhrase = remember { QuotaManager.getCommitmentPhrase(context) }
+    var typedInput by remember { mutableStateOf("") }
+    val isMatch = typedInput.trim() == requiredPhrase.trim()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.GppMaybe,
+                    contentDescription = null,
+                    tint = AccentRed,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = title,
+                    fontFamily = RighteousFontFamily,
+                    fontSize = 16.sp,
+                    color = AccentRed
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = actionDesc,
+                    fontFamily = PoppinsFontFamily,
+                    fontSize = 11.5.sp,
+                    color = Color.LightGray,
+                    lineHeight = 16.sp
+                )
+
+                Text(
+                    text = "Ketik ulang kalimat komitmen berikut persis (tanpa copy-paste):",
+                    fontFamily = PoppinsFontFamily,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AccentAmber
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF1E1E1E),
+                    border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "\"$requiredPhrase\"",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.5.sp,
+                        color = AccentAmber,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(10.dp)
+                    )
+                }
+
+                OutlinedTextField(
+                    value = typedInput,
+                    onValueChange = { typedInput = it },
+                    placeholder = { Text("Ketik kalimat di atas...", fontSize = 11.5.sp) },
+                    singleLine = false,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (typedInput.isNotEmpty() && !isMatch) {
+                    Text(
+                        text = "⚠️ Kalimat belum cocok persis (${typedInput.length}/${requiredPhrase.length} karakter)",
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontSize = 10.sp,
+                        color = AccentRed
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (isMatch) {
+                        onConfirmed()
+                    } else {
+                        Toast.makeText(context, "Kalimat komitmen belum cocok!", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                enabled = isMatch,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AccentRed,
+                    disabledContainerColor = Color.DarkGray
+                )
+            ) {
+                Text(
+                    text = "Konfirmasi Tindakan",
+                    fontWeight = FontWeight.Bold,
+                    color = if (isMatch) Color.White else Color.Gray,
+                    fontSize = 11.sp
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Batal", color = Color.LightGray)
             }
         }
     )

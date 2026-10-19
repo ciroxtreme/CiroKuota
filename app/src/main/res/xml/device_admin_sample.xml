@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <!-- Memungkinkan status Device Admin aktif untuk mencegah penghapusan instalasi (anti-uninstall) -->
+    </uses-policies>
+</device-admin>

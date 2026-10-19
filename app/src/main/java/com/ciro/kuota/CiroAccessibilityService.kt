@@ -41,6 +41,17 @@ class CiroAccessibilityService : AccessibilityService() {
                 return
             }
 
+            // 0. BENTENG PENGATURAN SISTEM (SETTINGS GUARD)
+            // Melindungi CiroKuota agar tidak dimatikan aksesibilitasnya atau dicabut Device Admin-nya
+            if (pkg == "com.android.settings" && !QuotaManager.isSettingsGuardBypassActive(applicationContext)) {
+                val root = try { rootInActiveWindow ?: event.source } catch (_: Throwable) { null }
+                if (scanForSettingsTampering(root)) {
+                    performGlobalAction(GLOBAL_ACTION_HOME)
+                    triggerBlock("Pengaturan Sistem", "🔒 Halaman Pengaturan CiroKuota dikunci demi keamanan! Gunakan Emergency Exit jika diperlukan.")
+                    return
+                }
+            }
+
             // 1. Deteksi Cepat Domain Dewasa & Pornografi (missav.ai, pornhub, dll)
             if (QuotaManager.isAdultFilterActive(applicationContext)) {
                 // Cek teks langsung pada event
@@ -104,6 +115,30 @@ class CiroAccessibilityService : AccessibilityService() {
             }
         } catch (_: Throwable) {}
         return null
+    }
+
+    private fun scanForSettingsTampering(node: AccessibilityNodeInfo?, depth: Int = 0): Boolean {
+        if (node == null || depth > 8) return false
+        try {
+            val text = node.text?.toString()?.lowercase(Locale.US) ?: ""
+            val desc = node.contentDescription?.toString()?.lowercase(Locale.US) ?: ""
+
+            // Deteksi jika halaman Settings menampilkan opsi terkait CiroKuota atau Device Admin CiroKuota
+            val isTargetMentioned = text.contains("cirokuota") || desc.contains("cirokuota") ||
+                    text.contains("ciro kuota") || desc.contains("ciro kuota")
+
+            if (isTargetMentioned) {
+                return true
+            }
+
+            for (i in 0 until node.childCount) {
+                val child = try { node.getChild(i) } catch (_: Throwable) { null } ?: continue
+                val found = scanForSettingsTampering(child, depth + 1)
+                try { child.recycle() } catch (_: Throwable) {}
+                if (found) return true
+            }
+        } catch (_: Throwable) {}
+        return false
     }
 
     private fun startTicker() {
