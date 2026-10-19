@@ -29,3 +29,7 @@ val AccentGreen = Color(0xFF10B981) // Status Aman / Hemat
 val AccentAmber = Color(0xFFF59E0B) // Status Waspada Kuota (75%+)
 val AccentRed = Color(0xFFEF4444)   // Status Kunci / Kuota Habis (100%)
 val AccentCyan = Color(0xFF06B6D4)  // Status Wi-Fi Aktif
+val AccentBlue = Color(0xFF3B82F6)  // Status Info / Device Admin
+val AccentOrange = Color(0xFFF97316) // Status Ikrar / Warning
+val AccentPurple = Color(0xFF8B5CF6) // Status Cooldown / Timer
+
