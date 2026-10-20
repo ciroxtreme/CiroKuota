@@ -118,6 +118,7 @@ fun CiroKuotaMainScreen(
 
     // State Tab 2 Dialogs
     var showCustomAppQuotaDialog by remember { mutableStateOf(false) }
+    var timeSchedule by remember { mutableStateOf(QuotaManager.getTimeSchedule(context)) }
 
     // State Tab 4: Strict Mode
     var manualLockUntil by remember { mutableStateOf(QuotaManager.getManualLockUntil(context)) }
@@ -1583,11 +1584,7 @@ fun HabitProfileCard(
     }
 }
 
-        item { Spacer(modifier = Modifier.height(20.dp)) }
-    }
-}
-
-// ================= TAB 3: STRICT MODE (GEMBOK KETAT & OPSI TANTANGAN) =================
+// ================= TAB 4: STRICT MODE (GEMBOK KETAT & OPSI TANTANGAN) =================
 @Composable
 fun TabStrictModeScreen(
     isDark: Boolean,
