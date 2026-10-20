@@ -3822,7 +3822,10 @@ fun AppUsageRow(
                     }
 
                     Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Text(
                                 text = app.appName,
                                 fontFamily = PoppinsFontFamily,
@@ -3830,7 +3833,8 @@ fun AppUsageRow(
                                 fontSize = 13.sp,
                                 color = textPrimary,
                                 maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = if (app.isMonitored) Modifier.weight(1f, fill = false) else Modifier
                             )
                             if (app.isMonitored) {
                                 Spacer(modifier = Modifier.width(6.dp))
@@ -3838,13 +3842,26 @@ fun AppUsageRow(
                                     shape = RoundedCornerShape(4.dp),
                                     color = AccentAmber.copy(alpha = 0.15f)
                                 ) {
-                                    Text(
-                                        text = "Target Lock",
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontSize = 8.5.sp,
-                                        color = AccentAmber,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = AccentAmber,
+                                            modifier = Modifier.size(9.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(3.dp))
+                                        Text(
+                                            text = "Target Lock",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontSize = 8.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = AccentAmber,
+                                            maxLines = 1
+                                        )
+                                    }
                                 }
                             }
                         }
