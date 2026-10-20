@@ -3116,8 +3116,16 @@ fun HabitProfileEditDialog(
     var eH by remember { mutableIntStateOf(initialProfile.endHour) }
     var eM by remember { mutableIntStateOf(initialProfile.endMinute) }
 
+    var sHText by remember { mutableStateOf(initialProfile.startHour.toString()) }
+    var sMText by remember { mutableStateOf(String.format(Locale.US, "%02d", initialProfile.startMinute)) }
+    var eHText by remember { mutableStateOf(initialProfile.endHour.toString()) }
+    var eMText by remember { mutableStateOf(String.format(Locale.US, "%02d", initialProfile.endMinute)) }
+
     var isByLaunch by remember { mutableStateOf(initialProfile.isByLaunch) }
     var maxLaunches by remember { mutableIntStateOf(initialProfile.maxLaunches) }
+    var launchText by remember { mutableStateOf(initialProfile.maxLaunches.toString()) }
+
+    var durationText by remember { mutableStateOf(initialProfile.durationMinutes.toString()) }
 
     var showAppPickerSubDialog by remember { mutableStateOf(false) }
 
@@ -3211,7 +3219,7 @@ fun HabitProfileEditDialog(
                         border = BorderStroke(1.dp, if (isByDuration) AccentAmber.copy(alpha = 0.5f) else cardBorder),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -3231,6 +3239,7 @@ fun HabitProfileEditDialog(
                                 )
                             }
                             if (isByDuration) {
+                                // Preset Cepat
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -3243,7 +3252,53 @@ fun HabitProfileEditDialog(
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             durationMinutes = m
+                                            durationText = m.toString()
                                         }
+                                    }
+                                }
+
+                                // Custom Menit Input Manual
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Atur Menit Kustom:",
+                                        fontFamily = PoppinsFontFamily,
+                                        fontSize = 11.sp,
+                                        color = textSecondary
+                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = durationText,
+                                            onValueChange = { newVal ->
+                                                val digits = newVal.filter { it.isDigit() }
+                                                durationText = digits
+                                                if (digits.isNotBlank()) {
+                                                    val m = digits.toInt().coerceIn(1, 1440)
+                                                    durationMinutes = m
+                                                }
+                                            },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            singleLine = true,
+                                            modifier = Modifier.width(76.dp),
+                                            textStyle = androidx.compose.ui.text.TextStyle(
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        )
+                                        Text(
+                                            text = "menit",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontSize = 11.sp,
+                                            color = textSecondary
+                                        )
                                     }
                                 }
                             }
@@ -3259,7 +3314,7 @@ fun HabitProfileEditDialog(
                         border = BorderStroke(1.dp, if (isByTime) Color(0xFF38BDF8).copy(alpha = 0.5f) else cardBorder),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -3279,29 +3334,134 @@ fun HabitProfileEditDialog(
                                 )
                             }
                             if (isByTime) {
+                                // Preset cepat jadwal jam
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            sH = 22; sM = 0; eH = 5; eM = 0
+                                            sHText = "22"; sMText = "00"; eHText = "5"; eMText = "00"
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f).height(34.dp),
+                                        contentPadding = PaddingValues(0.dp)
+                                    ) {
+                                        Text("Tidur (22:00-05:00)", fontSize = 10.sp, color = textPrimary)
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            sH = 8; sM = 0; eH = 17; eM = 0
+                                            sHText = "8"; sMText = "00"; eHText = "17"; eMText = "00"
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f).height(34.dp),
+                                        contentPadding = PaddingValues(0.dp)
+                                    ) {
+                                        Text("Kerja (08:00-17:00)", fontSize = 10.sp, color = textPrimary)
+                                    }
+                                }
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    // Jam & Menit Mulai
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("Mulai (0-23)", fontSize = 10.sp, color = textSecondary)
-                                        OutlinedTextField(
-                                            value = sH.toString(),
-                                            onValueChange = { sH = (it.toIntOrNull() ?: 0).coerceIn(0, 23) },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            singleLine = true
-                                        )
+                                        Text("Mulai (Jam : Menit)", fontSize = 10.sp, color = textSecondary)
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            OutlinedTextField(
+                                                value = sHText,
+                                                onValueChange = { newVal ->
+                                                    val digits = newVal.filter { it.isDigit() }
+                                                    sHText = digits
+                                                    if (digits.isNotBlank()) sH = digits.toInt().coerceIn(0, 23)
+                                                },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                singleLine = true,
+                                                placeholder = { Text("00") },
+                                                modifier = Modifier.weight(1f),
+                                                textStyle = androidx.compose.ui.text.TextStyle(
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            )
+                                            Text(":", fontWeight = FontWeight.Bold, color = textSecondary)
+                                            OutlinedTextField(
+                                                value = sMText,
+                                                onValueChange = { newVal ->
+                                                    val digits = newVal.filter { it.isDigit() }
+                                                    sMText = digits
+                                                    if (digits.isNotBlank()) sM = digits.toInt().coerceIn(0, 59)
+                                                },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                singleLine = true,
+                                                placeholder = { Text("00") },
+                                                modifier = Modifier.weight(1f),
+                                                textStyle = androidx.compose.ui.text.TextStyle(
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            )
+                                        }
                                     }
-                                    Text("s/d", fontSize = 11.sp, color = textSecondary)
+
+                                    Text("s/d", fontSize = 11.sp, color = textSecondary, modifier = Modifier.padding(top = 14.dp))
+
+                                    // Jam & Menit Selesai
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text("Selesai (0-23)", fontSize = 10.sp, color = textSecondary)
-                                        OutlinedTextField(
-                                            value = eH.toString(),
-                                            onValueChange = { eH = (it.toIntOrNull() ?: 0).coerceIn(0, 23) },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            singleLine = true
-                                        )
+                                        Text("Selesai (Jam : Menit)", fontSize = 10.sp, color = textSecondary)
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            OutlinedTextField(
+                                                value = eHText,
+                                                onValueChange = { newVal ->
+                                                    val digits = newVal.filter { it.isDigit() }
+                                                    eHText = digits
+                                                    if (digits.isNotBlank()) eH = digits.toInt().coerceIn(0, 23)
+                                                },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                singleLine = true,
+                                                placeholder = { Text("00") },
+                                                modifier = Modifier.weight(1f),
+                                                textStyle = androidx.compose.ui.text.TextStyle(
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            )
+                                            Text(":", fontWeight = FontWeight.Bold, color = textSecondary)
+                                            OutlinedTextField(
+                                                value = eMText,
+                                                onValueChange = { newVal ->
+                                                    val digits = newVal.filter { it.isDigit() }
+                                                    eMText = digits
+                                                    if (digits.isNotBlank()) eM = digits.toInt().coerceIn(0, 59)
+                                                },
+                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                                singleLine = true,
+                                                placeholder = { Text("00") },
+                                                modifier = Modifier.weight(1f),
+                                                textStyle = androidx.compose.ui.text.TextStyle(
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 12.sp,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -3317,7 +3477,7 @@ fun HabitProfileEditDialog(
                         border = BorderStroke(1.dp, if (isByLaunch) AccentRed.copy(alpha = 0.5f) else cardBorder),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -3328,7 +3488,7 @@ fun HabitProfileEditDialog(
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Icon(Icons.Default.TouchApp, contentDescription = null, tint = AccentRed, modifier = Modifier.size(16.dp))
-                                    Text("By Launch (Batas Buka)", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp, color = textPrimary)
+                                    Text("By Launch / Click (Batas Buka)", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp, color = textPrimary)
                                 }
                                 Switch(
                                     checked = isByLaunch,
@@ -3349,7 +3509,53 @@ fun HabitProfileEditDialog(
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             maxLaunches = cnt
+                                            launchText = cnt.toString()
                                         }
+                                    }
+                                }
+
+                                // Custom Jumlah Buka Manual
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Batas Kustom (Kali):",
+                                        fontFamily = PoppinsFontFamily,
+                                        fontSize = 11.sp,
+                                        color = textSecondary
+                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = launchText,
+                                            onValueChange = { newVal ->
+                                                val digits = newVal.filter { it.isDigit() }
+                                                launchText = digits
+                                                if (digits.isNotBlank()) {
+                                                    val cnt = digits.toInt().coerceIn(1, 999)
+                                                    maxLaunches = cnt
+                                                }
+                                            },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            singleLine = true,
+                                            modifier = Modifier.width(76.dp),
+                                            textStyle = androidx.compose.ui.text.TextStyle(
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        )
+                                        Text(
+                                            text = "kali",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontSize = 11.sp,
+                                            color = textSecondary
+                                        )
                                     }
                                 }
                             }
