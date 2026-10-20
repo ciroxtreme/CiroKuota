@@ -1162,25 +1162,13 @@ fun TabQuotaAppScreen(
                             modifier = Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "STATUS SISA KUOTA APLIKASI",
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    color = AccentAmber
-                                )
-                                Text(
-                                    text = "Hitungan Real Harian",
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontSize = 9.5.sp,
-                                    color = textSecondary
-                                )
-                            }
+                            Text(
+                                text = "STATUS SISA KUOTA APLIKASI",
+                                fontFamily = JetBrainsMonoFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = AccentAmber
+                            )
 
                             if (appBlockPackages.isEmpty()) {
                                 Text(
