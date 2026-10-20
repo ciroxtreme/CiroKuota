@@ -80,7 +80,8 @@ class MainActivity : ComponentActivity() {
 
 enum class CiroTab(val title: String, val icon: ImageVector) {
     DASHBOARD("Dashboard", Icons.Default.Shield),
-    SCHEDULES("Schedules", Icons.Default.Schedule),
+    KUOTA_APP("Kuota App", Icons.Default.DataSaverOn),
+    HABITS("Habits", Icons.Default.Schedule),
     STRICT_MODE("Strict Mode", Icons.Default.Lock),
     SETTINGS("Pengaturan", Icons.Default.Settings)
 }
@@ -105,18 +106,20 @@ fun CiroKuotaMainScreen(
     var selectedBlackholeApps by remember { mutableStateOf(QuotaManager.getBlackholePackages(context)) }
     var appBlockPackages by remember { mutableStateOf(QuotaManager.getAppBlockPackages(context)) }
 
-    // State Tab 2: Schedules Conditions
-    var isCondByKuota by remember { mutableStateOf(QuotaManager.isCondByKuotaActive(context)) }
+    // State Tab 2: Kuota App (Limit Kuota Kustom per Aplikasi)
     var isCondByAppQuota by remember { mutableStateOf(QuotaManager.isCondByAppQuotaActive(context)) }
     var appQuotaBudgetMb by remember { mutableStateOf(QuotaManager.getAppQuotaBudgetMb(context)) }
-    var isCondByDuration by remember { mutableStateOf(QuotaManager.isCondByDurationActive(context)) }
-    var isCondByTime by remember { mutableStateOf(QuotaManager.isCondByTimeActive(context)) }
-    var isCondByLaunch by remember { mutableStateOf(QuotaManager.isCondByLaunchActive(context)) }
-    var sessionLimitMin by remember { mutableStateOf(QuotaManager.getAppBlockSessionLimitMinutes(context)) }
-    var maxLaunches by remember { mutableStateOf(QuotaManager.getMaxLaunchesPerDay(context)) }
-    var timeSchedule by remember { mutableStateOf(QuotaManager.getTimeSchedule(context)) }
+    var quotaRefreshTrigger by remember { mutableIntStateOf(0) }
 
-    // State Tab 3: Strict Mode
+    // State Tab 3: Habits (Dynamic AppBlock-style Profiles)
+    var habitProfiles by remember { mutableStateOf(QuotaManager.getHabitProfiles(context)) }
+    var editingHabitProfile by remember { mutableStateOf<HabitProfile?>(null) }
+    var showHabitProfileDialog by remember { mutableStateOf(false) }
+
+    // State Tab 2 Dialogs
+    var showCustomAppQuotaDialog by remember { mutableStateOf(false) }
+
+    // State Tab 4: Strict Mode
     var manualLockUntil by remember { mutableStateOf(QuotaManager.getManualLockUntil(context)) }
     var isStrictPhrase by remember { mutableStateOf(QuotaManager.isStrictPhraseActive(context)) }
     var isStrictMath by remember { mutableStateOf(QuotaManager.isStrictMathActive(context)) }
@@ -372,110 +375,80 @@ fun CiroKuotaMainScreen(
                     )
                 }
 
-                CiroTab.SCHEDULES -> {
-                    TabSchedulesScreen(
+                CiroTab.KUOTA_APP -> {
+                    TabQuotaAppScreen(
                         isDark = isDark,
-                        budgetMb = dailyBudgetMb,
                         appBlockPackages = appBlockPackages,
-                        sessionLimitMin = sessionLimitMin,
-                        maxLaunches = maxLaunches,
-                        timeSchedule = timeSchedule,
-                        isCondByKuota = isCondByKuota,
                         isCondByAppQuota = isCondByAppQuota,
-                        appQuotaBudgetMb = appQuotaBudgetMb,
-                        isCondByDuration = isCondByDuration,
-                        isCondByTime = isCondByTime,
-                        isCondByLaunch = isCondByLaunch,
                         cardColor = cardColor,
                         cardBorder = cardBorder,
                         textPrimary = textPrimary,
                         textSecondary = textSecondary,
+                        quotaRefreshTrigger = quotaRefreshTrigger,
                         onManageAppBlockApps = { showAppBlockPickerDialog = true },
-                        onSyncWithBlackhole = {
-                            appBlockPackages = selectedBlackholeApps
-                            QuotaManager.setAppBlockPackages(context, selectedBlackholeApps)
-                            Toast.makeText(context, "Target disamakan dengan ${selectedBlackholeApps.size} aplikasi Blackhole!", Toast.LENGTH_SHORT).show()
-                        },
-                        onToggleCondByKuota = {
-                            if (isCondByKuota) {
-                                commitmentDialogTitle = "MATIKAN KONDISI BY KUOTA"
-                                commitmentDialogDesc = "Anda akan mematikan perlindungan pembatasan berdasarkan sisa kuota harian."
-                                pendingCommitmentAction = {
-                                    isCondByKuota = false
-                                    QuotaManager.setCondByKuotaActive(context, false)
-                                }
-                            } else {
-                                isCondByKuota = true
-                                QuotaManager.setCondByKuotaActive(context, true)
-                            }
-                        },
+                        onOpenCustomAppQuotaDialog = { showCustomAppQuotaDialog = true },
                         onToggleCondByAppQuota = {
                             if (isCondByAppQuota) {
-                                commitmentDialogTitle = "MATIKAN BY KUOTA PER APP"
-                                commitmentDialogDesc = "Anda akan mematikan batas kuota per aplikasi (${appQuotaBudgetMb.toInt()} MB)."
+                                commitmentDialogTitle = "MATIKAN PENGAMAN KUOTA APLIKASI"
+                                commitmentDialogDesc = "Anda akan mematikan perlindungan pembatasan kuota per aplikasi."
                                 pendingCommitmentAction = {
                                     isCondByAppQuota = false
                                     QuotaManager.setCondByAppQuotaActive(context, false)
+                                    Toast.makeText(context, "Pengaman kuota aplikasi dimatikan.", Toast.LENGTH_SHORT).show()
                                 }
                             } else {
                                 isCondByAppQuota = true
                                 QuotaManager.setCondByAppQuotaActive(context, true)
-                                Toast.makeText(context, "By Kuota Aplikasi aktif (Mengikuti pemakaian asli hari ini)!", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "🛡️ Pengaman kuota aplikasi aktif!", Toast.LENGTH_SHORT).show()
                             }
+                        }
+                    )
+                }
+
+                CiroTab.HABITS -> {
+                    TabHabitsScreen(
+                        isDark = isDark,
+                        habitProfiles = habitProfiles,
+                        cardColor = cardColor,
+                        cardBorder = cardBorder,
+                        textPrimary = textPrimary,
+                        textSecondary = textSecondary,
+                        onCreateNewProfile = {
+                            editingHabitProfile = HabitProfile(
+                                id = java.util.UUID.randomUUID().toString(),
+                                name = "Profil Baru",
+                                isEnabled = true,
+                                packages = emptySet(),
+                                isByDuration = true,
+                                durationMinutes = 20,
+                                isByTime = false,
+                                startHour = 22,
+                                startMinute = 0,
+                                endHour = 5,
+                                endMinute = 0,
+                                isByLaunch = false,
+                                maxLaunches = 5
+                            )
+                            showHabitProfileDialog = true
                         },
-                        onAppQuotaBudgetChange = { mb ->
-                            appQuotaBudgetMb = mb
-                            QuotaManager.setAppQuotaBudgetMb(context, mb)
-                            Toast.makeText(context, "Batas kuota aplikasi diubah ke ${if (mb >= 1024f) "1 GB" else "${mb.toInt()} MB"}!", Toast.LENGTH_SHORT).show()
+                        onEditProfile = { profile ->
+                            editingHabitProfile = profile
+                            showHabitProfileDialog = true
                         },
-                        onToggleCondByDuration = {
-                            if (isCondByDuration) {
-                                commitmentDialogTitle = "MATIKAN BY DURATION"
-                                commitmentDialogDesc = "Anda akan mematikan pembatasan durasi sesi ($sessionLimitMin menit)."
-                                pendingCommitmentAction = {
-                                    isCondByDuration = false
-                                    QuotaManager.setCondByDurationActive(context, false)
-                                }
-                            } else {
-                                isCondByDuration = true
-                                QuotaManager.setCondByDurationActive(context, true)
+                        onToggleProfile = { profile ->
+                            val updated = profile.copy(isEnabled = !profile.isEnabled)
+                            QuotaManager.saveOrUpdateHabitProfile(context, updated)
+                            habitProfiles = QuotaManager.getHabitProfiles(context)
+                        },
+                        onDeleteProfile = { profile ->
+                            commitmentDialogTitle = "HAPUS PROFIL HABIT"
+                            commitmentDialogDesc = "Anda akan menghapus profil habit \"${profile.name}\". Apakah Anda yakin?"
+                            pendingCommitmentAction = {
+                                QuotaManager.deleteHabitProfile(context, profile.id)
+                                habitProfiles = QuotaManager.getHabitProfiles(context)
+                                Toast.makeText(context, "Profil \"${profile.name}\" dihapus", Toast.LENGTH_SHORT).show()
                             }
-                        },
-                        onToggleCondByTime = {
-                            if (isCondByTime) {
-                                commitmentDialogTitle = "MATIKAN BY TIME SCHEDULE"
-                                commitmentDialogDesc = "Anda akan mematikan gembok jadwal jam."
-                                pendingCommitmentAction = {
-                                    isCondByTime = false
-                                    QuotaManager.setCondByTimeActive(context, false)
-                                }
-                            } else {
-                                isCondByTime = true
-                                QuotaManager.setCondByTimeActive(context, true)
-                            }
-                        },
-                        onToggleCondByLaunch = {
-                            if (isCondByLaunch) {
-                                commitmentDialogTitle = "MATIKAN BY LAUNCH COUNT"
-                                commitmentDialogDesc = "Anda akan mematikan batas buka aplikasi harian ($maxLaunches kali)."
-                                pendingCommitmentAction = {
-                                    isCondByLaunch = false
-                                    QuotaManager.setCondByLaunchActive(context, false)
-                                }
-                            } else {
-                                isCondByLaunch = true
-                                QuotaManager.setCondByLaunchActive(context, true)
-                            }
-                        },
-                        onSessionLimitChange = { min ->
-                            sessionLimitMin = min
-                            QuotaManager.setAppBlockSessionLimitMinutes(context, min)
-                        },
-                        onMaxLaunchesChange = { cnt ->
-                            maxLaunches = cnt
-                            QuotaManager.setMaxLaunchesPerDay(context, cnt)
-                        },
-                        onOpenTimeDialog = { showTimePickerDialog = true }
+                        }
                     )
                 }
 
@@ -670,11 +643,15 @@ fun CiroKuotaMainScreen(
         )
     }
 
-    // Modal Dialog: Kelola Aplikasi Target Schedules
+    // Modal Dialog: Kelola Aplikasi Target Pengaman Kuota (Dengan Anti-Bentrok)
     if (showAppBlockPickerDialog) {
+        val conflictMap = remember(habitProfiles) {
+            QuotaManager.getAppAssignmentMap(context, excludeQuota = true)
+        }
         AppBlockPickerDialog(
             isDark = isDark,
             appBlockPackages = appBlockPackages,
+            conflictMap = conflictMap,
             cardColor = cardColor,
             cardBorder = cardBorder,
             textPrimary = textPrimary,
@@ -683,20 +660,68 @@ fun CiroKuotaMainScreen(
                 val current = QuotaManager.getAppBlockPackages(context)
                 if (current.contains(pkg)) {
                     // Mau meng-unlist/menghapus aplikasi target: WAJIB komitmen!
-                    commitmentDialogTitle = "UNLIST APLIKASI TERKUNCI"
-                    commitmentDialogDesc = "Anda akan menghapus aplikasi ini dari daftar proteksi. Apakah Anda yakin ingin melepas gembok aplikasi ini?"
+                    commitmentDialogTitle = "UNLIST APLIKASI PENGAMAN KUOTA"
+                    commitmentDialogDesc = "Anda akan melepas aplikasi ini dari Pengaman Kuota. Apakah Anda yakin?"
                     pendingCommitmentAction = {
                         QuotaManager.toggleAppBlockPackage(context, pkg)
                         appBlockPackages = QuotaManager.getAppBlockPackages(context)
-                        Toast.makeText(context, "Aplikasi dilepas dari pemantauan", Toast.LENGTH_SHORT).show()
+                        quotaRefreshTrigger++
+                        Toast.makeText(context, "Aplikasi dilepas dari pengaman kuota", Toast.LENGTH_SHORT).show()
                     }
                 } else {
                     // Menambah aplikasi baru: diperbolehkan langsung
                     QuotaManager.toggleAppBlockPackage(context, pkg)
                     appBlockPackages = QuotaManager.getAppBlockPackages(context)
+                    quotaRefreshTrigger++
                 }
             },
             onDismiss = { showAppBlockPickerDialog = false }
+        )
+    }
+
+    // Modal Dialog: Atur Limit Kuota Masing-Masing Aplikasi
+    if (showCustomAppQuotaDialog) {
+        CustomAppQuotaDialog(
+            isDark = isDark,
+            appBlockPackages = appBlockPackages,
+            cardColor = cardColor,
+            cardBorder = cardBorder,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            onSave = {
+                quotaRefreshTrigger++
+                showCustomAppQuotaDialog = false
+                Toast.makeText(context, "Limit kuota per aplikasi berhasil disimpan!", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showCustomAppQuotaDialog = false }
+        )
+    }
+
+    // Modal Dialog: Edit / Tambah Profil Habit (Dengan Anti-Bentrok)
+    if (showHabitProfileDialog && editingHabitProfile != null) {
+        val profile = editingHabitProfile!!
+        val conflictMap = remember(profile.id, habitProfiles, appBlockPackages) {
+            QuotaManager.getAppAssignmentMap(context, excludeHabitProfileId = profile.id)
+        }
+        HabitProfileEditDialog(
+            isDark = isDark,
+            initialProfile = profile,
+            conflictMap = conflictMap,
+            cardColor = cardColor,
+            cardBorder = cardBorder,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            onDismiss = {
+                showHabitProfileDialog = false
+                editingHabitProfile = null
+            },
+            onSave = { updatedProfile ->
+                QuotaManager.saveOrUpdateHabitProfile(context, updatedProfile)
+                habitProfiles = QuotaManager.getHabitProfiles(context)
+                showHabitProfileDialog = false
+                editingHabitProfile = null
+                Toast.makeText(context, "Profil \"${updatedProfile.name}\" berhasil disimpan!", Toast.LENGTH_SHORT).show()
+            }
         )
     }
 
@@ -977,41 +1002,22 @@ fun TabDashboardScreen(
     }
 }
 
-// ================= TAB 2: SCHEDULES (PROFIL PEMBLOKIR ALA APPBLOCK) =================
+// ================= TAB 2: KUOTA APP (PENGAMAN KUOTA KHUSUS) =================
 @Composable
-fun TabSchedulesScreen(
+fun TabQuotaAppScreen(
     isDark: Boolean,
-    budgetMb: Float,
     appBlockPackages: Set<String>,
-    sessionLimitMin: Int,
-    maxLaunches: Int,
-    timeSchedule: Pair<Pair<Int, Int>, Pair<Int, Int>>,
-    isCondByKuota: Boolean,
     isCondByAppQuota: Boolean,
-    appQuotaBudgetMb: Float,
-    isCondByDuration: Boolean,
-    isCondByTime: Boolean,
-    isCondByLaunch: Boolean,
     cardColor: Color,
     cardBorder: Color,
     textPrimary: Color,
     textSecondary: Color,
+    quotaRefreshTrigger: Int,
     onManageAppBlockApps: () -> Unit,
-    onSyncWithBlackhole: () -> Unit,
-    onToggleCondByKuota: () -> Unit,
-    onToggleCondByAppQuota: () -> Unit,
-    onAppQuotaBudgetChange: (Float) -> Unit,
-    onToggleCondByDuration: () -> Unit,
-    onToggleCondByTime: () -> Unit,
-    onToggleCondByLaunch: () -> Unit,
-    onSessionLimitChange: (Int) -> Unit,
-    onMaxLaunchesChange: (Int) -> Unit,
-    onOpenTimeDialog: () -> Unit
+    onOpenCustomAppQuotaDialog: () -> Unit,
+    onToggleCondByAppQuota: () -> Unit
 ) {
     val context = LocalContext.current
-    val (start, end) = timeSchedule
-    val (sH, sM) = start
-    val (eH, eM) = end
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1020,9 +1026,9 @@ fun TabSchedulesScreen(
         // Section Header
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                SectionHeader(title = "PROFIL PEMBLOKIR (SCHEDULES)", textSecondary = textSecondary)
+                SectionHeader(title = "PENGAMAN KUOTA APLIKASI", textSecondary = textSecondary)
                 Text(
-                    text = "Atur target aplikasi & pemicu pemblokiran otomatis ala AppBlock + fitur eksklusif By Kuota.",
+                    text = "Pantau dan kunci aplikasi boros secara otomatis jika pemakaian data internet melebihi limit masing-masing.",
                     fontFamily = PoppinsFontFamily,
                     fontSize = 11.sp,
                     color = textSecondary
@@ -1030,7 +1036,7 @@ fun TabSchedulesScreen(
             }
         }
 
-        // Card 1: Target Pemblokiran (Apps & Websites)
+        // Card 1: Target Aplikasi
         item {
             Surface(
                 shape = RoundedCornerShape(16.dp),
@@ -1057,14 +1063,14 @@ fun TabSchedulesScreen(
                         }
                         Column {
                             Text(
-                                text = "Target Aplikasi Terpantau",
+                                text = "Aplikasi Terpantau",
                                 fontFamily = PoppinsFontFamily,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 13.sp,
                                 color = textPrimary
                             )
                             Text(
-                                text = "${appBlockPackages.size} aplikasi dipilih untuk diblokir",
+                                text = "${appBlockPackages.size} aplikasi dilindungi oleh Pengaman Kuota",
                                 fontFamily = PoppinsFontFamily,
                                 fontSize = 10.5.sp,
                                 color = textSecondary
@@ -1072,428 +1078,510 @@ fun TabSchedulesScreen(
                         }
                     }
 
-                    // Symmetrical Action Buttons (42dp, single line, no clipping)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Button(
+                        onClick = onManageAppBlockApps,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(42.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                     ) {
-                        Button(
-                            onClick = onManageAppBlockApps,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentAmber),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                        ) {
-                            Text(
-                                text = "✎ Kelola Aplikasi",
-                                fontFamily = PoppinsFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                color = Color.Black,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = onSyncWithBlackhole,
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp),
-                            border = BorderStroke(1.dp, cardBorder),
-                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
-                        ) {
-                            Text(
-                                text = "🕳️ Samakan Blackhole",
-                                fontFamily = PoppinsFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 11.sp,
-                                color = textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    Divider(color = cardBorder, thickness = 0.8.dp)
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(AccentRed.copy(alpha = 0.15f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Default.Shield, contentDescription = null, tint = AccentRed, modifier = Modifier.size(18.dp))
-                        }
-                        Column {
-                            Text(
-                                text = "Target Situs Web Terlarang",
-                                fontFamily = PoppinsFontFamily,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                color = textPrimary
-                            )
-                            Text(
-                                text = "missav.ai & domain dewasa otomatis diblokir saat kondisi aktif",
-                                fontFamily = PoppinsFontFamily,
-                                fontSize = 10.5.sp,
-                                color = textSecondary
-                            )
-                        }
+                        Text(
+                            text = "✎ Pilih / Kelola Aplikasi Terpantau",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.5.sp,
+                            color = Color.Black,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
         }
 
-        // Section: Kondisi Pemicu Blokir
-        item {
-            SectionHeader(title = "KONDISI PEMICU BLOKIR", textSecondary = textSecondary)
-        }
-
+        // Saklar Utama & Tombol Atur Limit Custom
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                // 1. By Kuota Utama (HP)
                 QuickSwitchCard(
-                    title = "📶 By Kuota Utama (Total HP)",
-                    subtitle = "Blokir aplikasi target otomatis jika kuota total mencapai budget (${budgetMb.toInt()} MB)",
-                    icon = Icons.Default.SignalCellularAlt,
-                    isActive = isCondByKuota,
-                    activeColor = AccentGreen,
+                    title = "🛡️ Aktifkan Pengaman Kuota",
+                    subtitle = "Blokir aplikasi target seketika saat kuotanya melampaui limit MB yang Anda atur",
+                    icon = Icons.Default.DataSaverOn,
+                    isActive = isCondByAppQuota,
+                    activeColor = AccentAmber,
                     cardBg = cardColor,
                     cardBorder = cardBorder,
                     textPrimary = textPrimary,
                     textSecondary = textSecondary,
-                    onToggle = onToggleCondByKuota
+                    onToggle = onToggleCondByAppQuota
                 )
 
-                // 2. By Kuota per Aplikasi (Batas Individual App)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    QuickSwitchCard(
-                        title = "📊 By Kuota per Aplikasi",
-                        subtitle = "Batas ${appQuotaBudgetMb.toInt()} MB per aplikasi sejak disetel (dihitung mulai 0 MB, bukan bawaan sistem)",
-                        icon = Icons.Default.DataSaverOn,
-                        isActive = isCondByAppQuota,
-                        activeColor = AccentAmber,
-                        cardBg = cardColor,
-                        cardBorder = cardBorder,
-                        textPrimary = textPrimary,
-                        textSecondary = textSecondary,
-                        onToggle = onToggleCondByAppQuota
-                    )
-
-                    if (isCondByAppQuota) {
-                        var showCustomAppBudgetDialog by remember { mutableStateOf(false) }
-
-                        if (showCustomAppBudgetDialog) {
-                            SetBudgetCustomDialog(
-                                initialBudgetMb = appQuotaBudgetMb,
-                                title = "Atur Budget Fleksibel (Per Aplikasi)",
-                                cardBg = cardColor,
-                                cardBorder = cardBorder,
-                                textPrimary = textPrimary,
-                                textSecondary = textSecondary,
-                                onDismiss = { showCustomAppBudgetDialog = false },
-                                onConfirm = { mb ->
-                                    onAppQuotaBudgetChange(mb)
-                                    showCustomAppBudgetDialog = false
-                                }
-                            )
-                        }
-
+                if (isCondByAppQuota) {
+                    // Tombol Custom Atur Limit Masing-Masing Aplikasi
+                    Button(
+                        onClick = onOpenCustomAppQuotaDialog,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            listOf(100f, 250f, 500f, 750f, 1024f).forEach { mb ->
-                                val label = if (mb >= 1024f) "1 GB" else "${mb.toInt()}M"
-                                PillChoice(
-                                    label = label,
-                                    isSelected = appQuotaBudgetMb == mb,
-                                    isDark = isDark,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    onAppQuotaBudgetChange(mb)
-                                }
-                            }
-                            // Custom button
-                            Box(
-                                modifier = Modifier
-                                    .weight(0.9f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (appQuotaBudgetMb !in listOf(100f, 250f, 500f, 750f, 1024f)) AccentAmber.copy(alpha = 0.2f) else Color.Transparent)
-                                    .border(1.dp, if (appQuotaBudgetMb !in listOf(100f, 250f, 500f, 750f, 1024f)) AccentAmber else cardBorder, RoundedCornerShape(8.dp))
-                                    .clickable { showCustomAppBudgetDialog = true }
-                                    .padding(vertical = 7.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = null,
-                                        tint = if (appQuotaBudgetMb !in listOf(100f, 250f, 500f, 750f, 1024f)) AccentAmber else textSecondary,
-                                        modifier = Modifier.size(11.dp)
-                                    )
-                                    Text(
-                                        text = "Custom",
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 10.sp,
-                                        color = if (appQuotaBudgetMb !in listOf(100f, 250f, 500f, 750f, 1024f)) AccentAmber else textSecondary
-                                    )
-                                }
-                            }
+                            Icon(Icons.Default.Tune, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Text(
+                                text = "⚙️ Atur Limit Kuota Masing-Masing Aplikasi",
+                                fontFamily = PoppinsFontFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.5.sp,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
+                    }
 
-                        // DAFTAR STATUS SISA KUOTA PER APLIKASI
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = subtaskBgColor(isDark),
-                            border = BorderStroke(0.8.dp, cardBorder),
-                            modifier = Modifier.fillMaxWidth()
+                    // DAFTAR STATUS SISA KUOTA APLIKASI
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = subtaskBgColor(isDark),
+                        border = BorderStroke(0.8.dp, cardBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "STATUS SISA KUOTA APLIKASI",
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 10.sp,
-                                        color = AccentAmber
-                                    )
-                                    Text(
-                                        text = "Budget: ${appQuotaBudgetMb.toInt()} MB",
-                                        fontFamily = JetBrainsMonoFontFamily,
-                                        fontSize = 10.sp,
-                                        color = textSecondary
-                                    )
-                                }
+                                Text(
+                                    text = "STATUS SISA KUOTA APLIKASI",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = AccentAmber
+                                )
+                                Text(
+                                    text = "Hitungan Real Harian",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 9.5.sp,
+                                    color = textSecondary
+                                )
+                            }
 
-                                if (appBlockPackages.isEmpty()) {
-                                    Text(
-                                        text = "Belum ada aplikasi yang dipilih untuk dipantau.",
-                                        fontFamily = PoppinsFontFamily,
-                                        fontSize = 11.sp,
-                                        color = textSecondary
-                                    )
-                                } else {
-                                    val pm = context.packageManager
-                                    appBlockPackages.forEach { pkg ->
-                                        val appLabel = remember(pkg) {
-                                            try {
-                                                val info = pm.getApplicationInfo(pkg, 0)
-                                                pm.getApplicationLabel(info).toString()
-                                            } catch (_: Exception) {
-                                                pkg
-                                            }
+                            if (appBlockPackages.isEmpty()) {
+                                Text(
+                                    text = "Belum ada aplikasi yang dipilih untuk dipantau.",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontSize = 11.sp,
+                                    color = textSecondary
+                                )
+                            } else {
+                                val pm = context.packageManager
+                                appBlockPackages.forEach { pkg ->
+                                    val appLabel = remember(pkg) {
+                                        try {
+                                            val info = pm.getApplicationInfo(pkg, 0)
+                                            pm.getApplicationLabel(info).toString()
+                                        } catch (_: Exception) {
+                                            pkg
                                         }
-                                        val usedMb = QuotaManager.getAppMonitoredUsageMb(context, pkg)
-                                        val remainingMb = (appQuotaBudgetMb - usedMb).coerceAtLeast(0f)
-                                        val percentUsed = ((usedMb / appQuotaBudgetMb) * 100f).coerceIn(0f, 100f)
-                                        val isExceeded = usedMb >= appQuotaBudgetMb
+                                    }
+                                    val customBudgetMb = remember(pkg, quotaRefreshTrigger) {
+                                        QuotaManager.getAppSpecificBudgetMb(context, pkg)
+                                    }
+                                    val usedMb = QuotaManager.getAppMonitoredUsageMb(context, pkg)
+                                    val remainingMb = (customBudgetMb - usedMb).coerceAtLeast(0f)
+                                    val percentUsed = ((usedMb / customBudgetMb) * 100f).coerceIn(0f, 100f)
+                                    val isExceeded = usedMb >= customBudgetMb
 
-                                        Column(
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Row(
                                             modifier = Modifier.fillMaxWidth(),
-                                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = appLabel,
-                                                    fontFamily = PoppinsFontFamily,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    fontSize = 11.5.sp,
-                                                    color = textPrimary,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis,
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                Text(
-                                                    text = if (isExceeded) "HABIS (0 MB)" else "Sisa ${String.format(Locale.US, "%.1f", remainingMb)} MB",
-                                                    fontFamily = JetBrainsMonoFontFamily,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 10.5.sp,
-                                                    color = if (isExceeded) AccentRed else AccentGreen
-                                                )
-                                            }
-
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text(
-                                                    text = "Terpakai: ${String.format(Locale.US, "%.1f", usedMb)} MB (${String.format(Locale.US, "%.0f", percentUsed)}%)",
-                                                    fontFamily = JetBrainsMonoFontFamily,
-                                                    fontSize = 9.sp,
-                                                    color = textSecondary
-                                                )
-                                                if (isExceeded) {
-                                                    Text(
-                                                        text = "🔒 DIBLOKIR",
-                                                        fontFamily = JetBrainsMonoFontFamily,
-                                                        fontWeight = FontWeight.Bold,
-                                                        fontSize = 9.sp,
-                                                        color = AccentRed
-                                                    )
-                                                }
-                                            }
-
-                                            LinearProgressIndicator(
-                                                progress = { (percentUsed / 100f).coerceIn(0f, 1f) },
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(5.dp)
-                                                    .clip(RoundedCornerShape(3.dp)),
-                                                color = if (isExceeded) AccentRed else if (percentUsed > 75f) AccentAmber else AccentGreen,
-                                                trackColor = cardBorder.copy(alpha = 0.4f)
+                                            Text(
+                                                text = appLabel,
+                                                fontFamily = PoppinsFontFamily,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontSize = 12.sp,
+                                                color = textPrimary,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            Text(
+                                                text = if (isExceeded) "HABIS (0 MB)" else "Sisa ${String.format(Locale.US, "%.1f", remainingMb)} MB",
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 10.5.sp,
+                                                color = if (isExceeded) AccentRed else AccentGreen
                                             )
                                         }
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = "Terpakai: ${String.format(Locale.US, "%.1f", usedMb)} / ${customBudgetMb.toInt()} MB (${String.format(Locale.US, "%.0f", percentUsed)}%)",
+                                                fontFamily = JetBrainsMonoFontFamily,
+                                                fontSize = 9.5.sp,
+                                                color = textSecondary
+                                            )
+                                            if (isExceeded) {
+                                                Text(
+                                                    text = "🔒 DIBLOKIR",
+                                                    fontFamily = JetBrainsMonoFontFamily,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 9.sp,
+                                                    color = AccentRed
+                                                )
+                                            }
+                                        }
+
+                                        LinearProgressIndicator(
+                                            progress = { (percentUsed / 100f).coerceIn(0f, 1f) },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(5.dp)
+                                                .clip(RoundedCornerShape(3.dp)),
+                                            color = if (isExceeded) AccentRed else if (percentUsed > 75f) AccentAmber else AccentGreen,
+                                            trackColor = cardBorder.copy(alpha = 0.4f)
+                                        )
                                     }
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
 
-                // 3. By Duration (Batas Waktu Sesi)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    QuickSwitchCard(
-                        title = "⏳ By Duration (Batas Sesi)",
-                        subtitle = "Tutup aplikasi setelah dipakai terus-menerus ($sessionLimitMin menit)",
-                        icon = Icons.Default.HourglassTop,
-                        isActive = isCondByDuration,
-                        activeColor = AccentAmber,
-                        cardBg = cardColor,
-                        cardBorder = cardBorder,
-                        textPrimary = textPrimary,
-                        textSecondary = textSecondary,
-                        onToggle = onToggleCondByDuration
+        item { Spacer(modifier = Modifier.height(20.dp)) }
+    }
+}
+
+// ================= TAB 3: HABITS (DYNAMIC APPBLOCK-STYLE PROFILES) =================
+@Composable
+fun TabHabitsScreen(
+    isDark: Boolean,
+    habitProfiles: List<HabitProfile>,
+    cardColor: Color,
+    cardBorder: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onCreateNewProfile: () -> Unit,
+    onEditProfile: (HabitProfile) -> Unit,
+    onToggleProfile: (HabitProfile) -> Unit,
+    onDeleteProfile: (HabitProfile) -> Unit
+) {
+    val context = LocalContext.current
+    val pm = remember { context.packageManager }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Section Header
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SectionHeader(title = "HABIT BLOCKER PROFILES", textSecondary = textSecondary)
+                Text(
+                    text = "Bebas buat banyak profil disiplin ala AppBlock (durasi sesi, jadwal jam gembok, atau batas buka harian).",
+                    fontFamily = PoppinsFontFamily,
+                    fontSize = 11.sp,
+                    color = textSecondary
+                )
+            }
+        }
+
+        // Tombol Buat Profil Baru
+        item {
+            Button(
+                onClick = onCreateNewProfile,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, tint = Color.Black, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = "➕ Buat Profil Habit Baru",
+                        fontFamily = PoppinsFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color.Black
                     )
-
-                    if (isCondByDuration) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(10, 15, 20, 30, 45, 60).forEach { min ->
-                                PillChoice(
-                                    label = "${min}m",
-                                    isSelected = sessionLimitMin == min,
-                                    isDark = isDark,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    onSessionLimitChange(min)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 3. By Time (Jadwal Jam Tertentu)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    QuickSwitchCard(
-                        title = "🕒 By Time (Jadwal Jam)",
-                        subtitle = "Blokir pada jam tertentu (Aktif: ${String.format(Locale.US, "%02d:%02d - %02d:%02d", sH, sM, eH, eM)})",
-                        icon = Icons.Default.AccessTime,
-                        isActive = isCondByTime,
-                        activeColor = Color(0xFF38BDF8),
-                        cardBg = cardColor,
-                        cardBorder = cardBorder,
-                        textPrimary = textPrimary,
-                        textSecondary = textSecondary,
-                        onToggle = onToggleCondByTime
-                    )
-
-                    if (isCondByTime) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    QuotaManager.setTimeSchedule(context = context, sH = 22, sM = 0, eH = 5, eM = 0)
-                                    onOpenTimeDialog()
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(38.dp),
-                                border = BorderStroke(1.dp, cardBorder),
-                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
-                            ) {
-                                Text("22:00-05:00", fontSize = 10.sp, color = textPrimary, maxLines = 1)
-                            }
-
-                            OutlinedButton(
-                                onClick = onOpenTimeDialog,
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(38.dp),
-                                border = BorderStroke(1.dp, cardBorder),
-                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 0.dp)
-                            ) {
-                                Text("Atur Jam...", fontSize = 10.sp, color = Color(0xFF38BDF8), maxLines = 1)
-                            }
-                        }
-                    }
-                }
-
-                // 4. By Launch Count (Batas Buka Harian)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    QuickSwitchCard(
-                        title = "🔢 By Launch Count",
-                        subtitle = "Batasi frekuensi membuka aplikasi target per hari (Maks $maxLaunches kali)",
-                        icon = Icons.Default.TouchApp,
-                        isActive = isCondByLaunch,
-                        activeColor = AccentRed,
-                        cardBg = cardColor,
-                        cardBorder = cardBorder,
-                        textPrimary = textPrimary,
-                        textSecondary = textSecondary,
-                        onToggle = onToggleCondByLaunch
-                    )
-
-                    if (isCondByLaunch) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(3, 5, 10, 15).forEach { cnt ->
-                                PillChoice(
-                                    label = "${cnt}x",
-                                    isSelected = maxLaunches == cnt,
-                                    isDark = isDark,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    onMaxLaunchesChange(cnt)
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
+
+        // Daftar Profil Dinamis
+        if (habitProfiles.isEmpty()) {
+            item {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = cardColor,
+                    border = BorderStroke(1.dp, cardBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Schedule, contentDescription = null, tint = textSecondary, modifier = Modifier.size(36.dp))
+                        Text(
+                            text = "Belum Ada Profil Habit",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = textPrimary
+                        )
+                        Text(
+                            text = "Klik tombol di atas untuk membuat jadwal blokir kustom baru.",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 11.sp,
+                            color = textSecondary,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+        } else {
+            items(habitProfiles.size) { idx ->
+                val profile = habitProfiles[idx]
+                HabitProfileCard(
+                    profile = profile,
+                    pm = pm,
+                    cardColor = cardColor,
+                    cardBorder = cardBorder,
+                    textPrimary = textPrimary,
+                    textSecondary = textSecondary,
+                    onToggle = { onToggleProfile(profile) },
+                    onEdit = { onEditProfile(profile) },
+                    onDelete = { onDeleteProfile(profile) }
+                )
+            }
+        }
+
+        item { Spacer(modifier = Modifier.height(20.dp)) }
+    }
+}
+
+@Composable
+fun HabitProfileCard(
+    profile: HabitProfile,
+    pm: PackageManager,
+    cardColor: Color,
+    cardBorder: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onToggle: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val activeBorder = if (profile.isEnabled) AccentGreen.copy(alpha = 0.5f) else cardBorder
+
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = cardColor,
+        border = BorderStroke(1.dp, activeBorder),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header Card: Title + Switch
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(if (profile.isEnabled) AccentGreen.copy(alpha = 0.15f) else cardBorder.copy(alpha = 0.3f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Schedule,
+                            contentDescription = null,
+                            tint = if (profile.isEnabled) AccentGreen else textSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = profile.name,
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "${profile.packages.size} aplikasi terpantau",
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = 10.sp,
+                            color = textSecondary
+                        )
+                    }
+                }
+
+                Switch(
+                    checked = profile.isEnabled,
+                    onCheckedChange = { onToggle() },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = AccentGreen,
+                        uncheckedThumbColor = Color.Gray,
+                        uncheckedTrackColor = cardBorder
+                    )
+                )
+            }
+
+            Divider(color = cardBorder, thickness = 0.8.dp)
+
+            // Pemicu yang aktif dalam profil ini
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (profile.isByDuration) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Default.HourglassTop, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(14.dp))
+                        Text(
+                            text = "By Duration: Maks ${profile.durationMinutes} menit sesi pemakaian",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 11.sp,
+                            color = textPrimary
+                        )
+                    }
+                }
+                if (profile.isByTime) {
+                    val timeStr = String.format(Locale.US, "%02d:%02d - %02d:%02d", profile.startHour, profile.startMinute, profile.endHour, profile.endMinute)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Default.AccessTime, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(14.dp))
+                        Text(
+                            text = "By Time: Gembok pada jam $timeStr",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 11.sp,
+                            color = textPrimary
+                        )
+                    }
+                }
+                if (profile.isByLaunch) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Default.TouchApp, contentDescription = null, tint = AccentRed, modifier = Modifier.size(14.dp))
+                        Text(
+                            text = "By Launch: Maks ${profile.maxLaunches} kali buka per hari",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 11.sp,
+                            color = textPrimary
+                        )
+                    }
+                }
+                if (!profile.isByDuration && !profile.isByTime && !profile.isByLaunch) {
+                    Text(
+                        text = "Belum ada kondisi pemicu yang dicentang.",
+                        fontFamily = PoppinsFontFamily,
+                        fontSize = 10.5.sp,
+                        color = textSecondary
+                    )
+                }
+            }
+
+            // Preview Nama Aplikasi
+            if (profile.packages.isNotEmpty()) {
+                val appNames = profile.packages.take(3).map { pkg ->
+                    try {
+                        val ai = pm.getApplicationInfo(pkg, 0)
+                        pm.getApplicationLabel(ai).toString()
+                    } catch (_: Exception) {
+                        pkg
+                    }
+                }
+                val previewStr = if (profile.packages.size > 3) {
+                    "${appNames.joinToString(", ")} +${profile.packages.size - 3} lainnya"
+                } else {
+                    appNames.joinToString(", ")
+                }
+                Text(
+                    text = "Aplikasi: $previewStr",
+                    fontFamily = JetBrainsMonoFontFamily,
+                    fontSize = 10.sp,
+                    color = textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            // Action Buttons: Edit & Hapus
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onEdit,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp),
+                    border = BorderStroke(1.dp, cardBorder),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                ) {
+                    Text("✎ Edit Profil", fontSize = 11.sp, color = textPrimary)
+                }
+
+                OutlinedButton(
+                    onClick = onDelete,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp),
+                    border = BorderStroke(1.dp, AccentRed.copy(alpha = 0.4f)),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                ) {
+                    Text("🗑️ Hapus", fontSize = 11.sp, color = AccentRed)
+                }
+            }
+        }
+    }
+}
 
         item { Spacer(modifier = Modifier.height(20.dp)) }
     }
@@ -2617,11 +2705,12 @@ fun BlackholePickerDialog(
     )
 }
 
-// 2. DIALOG PEMILIH APLIKASI SCHEDULES (APPBLOCK PICKER)
+// 2. DIALOG PEMILIH APLIKASI TARGET (DENGAN ANTI-BENTROK)
 @Composable
 fun AppBlockPickerDialog(
     isDark: Boolean,
     appBlockPackages: Set<String>,
+    conflictMap: Map<String, String> = emptyMap(),
     cardColor: Color,
     cardBorder: Color,
     textPrimary: Color,
@@ -2633,8 +2722,8 @@ fun AppBlockPickerDialog(
     var query by remember { mutableStateOf("") }
     var filterMode by remember { mutableStateOf("ALL") }
 
-    val candidateApps = remember(appBlockPackages) {
-        QuotaManager.getAllCandidateApps(context, appBlockPackages)
+    val candidateApps = remember(appBlockPackages, conflictMap) {
+        QuotaManager.getAllCandidateApps(context, appBlockPackages, conflictMap)
     }
 
     val selectedCount = remember(candidateApps) { candidateApps.count { it.isSelected } }
@@ -2661,14 +2750,14 @@ fun AppBlockPickerDialog(
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Kelola Aplikasi Terkunci",
+                    text = "Pilih Aplikasi Pengaman Kuota",
                     fontFamily = PoppinsFontFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 16.sp,
                     color = textPrimary
                 )
                 Text(
-                    text = "$selectedCount dari ${candidateApps.size} aplikasi dipilih untuk dipantau",
+                    text = "$selectedCount dari ${candidateApps.size} aplikasi dipilih untuk dipantau kuotanya",
                     fontFamily = PoppinsFontFamily,
                     fontSize = 11.sp,
                     color = textSecondary
@@ -2732,7 +2821,8 @@ fun AppBlockPickerDialog(
                 ) {
                     OutlinedButton(
                         onClick = {
-                            QuotaManager.setAppBlockPackages(context, QuotaManager.DEFAULT_APPBLOCK_APPS)
+                            val availableDefaults = QuotaManager.DEFAULT_APPBLOCK_APPS.filter { !conflictMap.containsKey(it) }.toSet()
+                            QuotaManager.setAppBlockPackages(context, availableDefaults)
                         },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
@@ -2765,24 +2855,42 @@ fun AppBlockPickerDialog(
                 ) {
                     items(filtered.size) { idx ->
                         val app = filtered[idx]
+                        val isBlockedByConflict = app.isAssignedElsewhere && !app.isSelected
+
                         Surface(
                             shape = RoundedCornerShape(8.dp),
-                            color = if (app.isSelected) AccentAmber.copy(alpha = 0.1f) else cardColor,
-                            border = BorderStroke(1.dp, if (app.isSelected) AccentAmber.copy(alpha = 0.4f) else cardBorder),
+                            color = when {
+                                app.isSelected -> AccentAmber.copy(alpha = 0.1f)
+                                isBlockedByConflict -> cardBorder.copy(alpha = 0.15f)
+                                else -> cardColor
+                            },
+                            border = BorderStroke(
+                                1.dp,
+                                when {
+                                    app.isSelected -> AccentAmber.copy(alpha = 0.4f)
+                                    isBlockedByConflict -> cardBorder.copy(alpha = 0.3f)
+                                    else -> cardBorder
+                                }
+                            ),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onTogglePackage(app.packageName) }
+                                .clickable(enabled = !isBlockedByConflict) { onTogglePackage(app.packageName) }
                         ) {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                    .padding(horizontal = 8.dp, vertical = 5.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Checkbox(
                                     checked = app.isSelected,
-                                    onCheckedChange = { onTogglePackage(app.packageName) },
-                                    colors = CheckboxDefaults.colors(checkedColor = AccentAmber)
+                                    enabled = !isBlockedByConflict,
+                                    onCheckedChange = { if (!isBlockedByConflict) onTogglePackage(app.packageName) },
+                                    colors = CheckboxDefaults.colors(
+                                        checkedColor = AccentAmber,
+                                        disabledCheckedColor = Color.Gray,
+                                        disabledUncheckedColor = Color.DarkGray
+                                    )
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
@@ -2790,7 +2898,7 @@ fun AppBlockPickerDialog(
                                         fontFamily = PoppinsFontFamily,
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 11.5.sp,
-                                        color = textPrimary,
+                                        color = if (isBlockedByConflict) textSecondary.copy(alpha = 0.5f) else textPrimary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -2798,10 +2906,21 @@ fun AppBlockPickerDialog(
                                         text = app.packageName,
                                         fontFamily = JetBrainsMonoFontFamily,
                                         fontSize = 8.5.sp,
-                                        color = textSecondary,
+                                        color = textSecondary.copy(alpha = if (isBlockedByConflict) 0.4f else 0.8f),
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
+                                    if (isBlockedByConflict) {
+                                        Text(
+                                            text = "🔒 Digunakan di: ${app.assignedLabel}",
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 8.5.sp,
+                                            color = AccentAmber,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2820,7 +2939,491 @@ fun AppBlockPickerDialog(
     )
 }
 
-// 3. DIALOG PILIH RENTANG JAM (BY TIME SCHEDULE)
+// 3. DIALOG ATUR LIMIT KUOTA MASING-MASING APLIKASI SECARA MANUAL
+@Composable
+fun CustomAppQuotaDialog(
+    isDark: Boolean,
+    appBlockPackages: Set<String>,
+    cardColor: Color,
+    cardBorder: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val pm = remember { context.packageManager }
+
+    // Map package -> String input text
+    val inputValues = remember(appBlockPackages) {
+        val map = mutableStateMapOf<String, String>()
+        for (pkg in appBlockPackages) {
+            val budget = QuotaManager.getAppSpecificBudgetMb(context, pkg)
+            map[pkg] = budget.toInt().toString()
+        }
+        map
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "Atur Limit Kuota Masing-Masing Aplikasi",
+                    fontFamily = PoppinsFontFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    color = textPrimary
+                )
+                Text(
+                    text = "Tentukan jatah data (MB) khusus untuk tiap aplikasi yang dipantau.",
+                    fontFamily = PoppinsFontFamily,
+                    fontSize = 11.sp,
+                    color = textSecondary
+                )
+            }
+        },
+        text = {
+            if (appBlockPackages.isEmpty()) {
+                Text(
+                    text = "Belum ada aplikasi yang dimasukkan ke Pengaman Kuota. Pilih aplikasi terlebih dahulu.",
+                    fontFamily = PoppinsFontFamily,
+                    fontSize = 12.sp,
+                    color = textSecondary
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(appBlockPackages.toList().size) { idx ->
+                        val pkg = appBlockPackages.toList()[idx]
+                        val appLabel = remember(pkg) {
+                            try {
+                                val ai = pm.getApplicationInfo(pkg, 0)
+                                pm.getApplicationLabel(ai).toString()
+                            } catch (_: Exception) {
+                                pkg
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = subtaskBgColor(isDark),
+                            border = BorderStroke(0.8.dp, cardBorder),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = appLabel,
+                                        fontFamily = PoppinsFontFamily,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontSize = 12.sp,
+                                        color = textPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = pkg,
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = 8.5.sp,
+                                        color = textSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = inputValues[pkg] ?: "100",
+                                        onValueChange = { newVal ->
+                                            val digits = newVal.filter { it.isDigit() }
+                                            inputValues[pkg] = digits
+                                        },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                        modifier = Modifier.width(90.dp),
+                                        textStyle = androidx.compose.ui.text.TextStyle(
+                                            fontFamily = JetBrainsMonoFontFamily,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    )
+                                    Text(
+                                        text = "MB",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        color = textSecondary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    for ((pkg, valueStr) in inputValues) {
+                        val mb = valueStr.toFloatOrNull() ?: 100f
+                        QuotaManager.setAppSpecificBudgetMb(context, pkg, mb)
+                    }
+                    onSave()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+            ) {
+                Text("Simpan Limit", fontWeight = FontWeight.Bold, color = Color.Black)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Batal", color = textSecondary)
+            }
+        }
+    )
+}
+
+// 4. DIALOG EDIT / BUAT PROFIL HABIT (DENGAN PEMILIH APP ANTI-BENTROK)
+@Composable
+fun HabitProfileEditDialog(
+    isDark: Boolean,
+    initialProfile: HabitProfile,
+    conflictMap: Map<String, String>,
+    cardColor: Color,
+    cardBorder: Color,
+    textPrimary: Color,
+    textSecondary: Color,
+    onDismiss: () -> Unit,
+    onSave: (HabitProfile) -> Unit
+) {
+    val context = LocalContext.current
+    var name by remember { mutableStateOf(initialProfile.name) }
+    var selectedPkgs by remember { mutableStateOf(initialProfile.packages) }
+
+    var isByDuration by remember { mutableStateOf(initialProfile.isByDuration) }
+    var durationMinutes by remember { mutableIntStateOf(initialProfile.durationMinutes) }
+
+    var isByTime by remember { mutableStateOf(initialProfile.isByTime) }
+    var sH by remember { mutableIntStateOf(initialProfile.startHour) }
+    var sM by remember { mutableIntStateOf(initialProfile.startMinute) }
+    var eH by remember { mutableIntStateOf(initialProfile.endHour) }
+    var eM by remember { mutableIntStateOf(initialProfile.endMinute) }
+
+    var isByLaunch by remember { mutableStateOf(initialProfile.isByLaunch) }
+    var maxLaunches by remember { mutableIntStateOf(initialProfile.maxLaunches) }
+
+    var showAppPickerSubDialog by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = if (initialProfile.name.isNotBlank()) "Edit Profil Habit" else "Buat Profil Habit Baru",
+                fontFamily = PoppinsFontFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                color = textPrimary
+            )
+        },
+        text = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 440.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 1. Nama Profil
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Nama Profil:", fontFamily = PoppinsFontFamily, fontSize = 11.sp, color = textSecondary)
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it },
+                            placeholder = { Text("Contoh: Jam Tidur / Belajar") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                // 2. Aplikasi Terpilih & Tombol Kelola
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = subtaskBgColor(isDark),
+                        border = BorderStroke(0.8.dp, cardBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Aplikasi Target (${selectedPkgs.size})",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.5.sp,
+                                    color = textPrimary
+                                )
+                                TextButton(
+                                    onClick = { showAppPickerSubDialog = true },
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text("✎ Pilih Aplikasi", fontSize = 11.sp, color = AccentGreen)
+                                }
+                            }
+                            if (selectedPkgs.isEmpty()) {
+                                Text(
+                                    text = "⚠️ Belum ada aplikasi yang dipilih untuk profil ini.",
+                                    fontFamily = PoppinsFontFamily,
+                                    fontSize = 10.5.sp,
+                                    color = AccentAmber
+                                )
+                            } else {
+                                Text(
+                                    text = "${selectedPkgs.size} aplikasi dipilih khusus untuk profil ini.",
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontSize = 10.sp,
+                                    color = textSecondary
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 3. Pemicu 1: By Duration
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = cardColor,
+                        border = BorderStroke(1.dp, if (isByDuration) AccentAmber.copy(alpha = 0.5f) else cardBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(Icons.Default.HourglassTop, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(16.dp))
+                                    Text("By Duration (Batas Sesi)", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp, color = textPrimary)
+                                }
+                                Switch(
+                                    checked = isByDuration,
+                                    onCheckedChange = { isByDuration = it },
+                                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AccentAmber)
+                                )
+                            }
+                            if (isByDuration) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    listOf(10, 15, 20, 30, 45, 60).forEach { m ->
+                                        PillChoice(
+                                            label = "${m}m",
+                                            isSelected = durationMinutes == m,
+                                            isDark = isDark,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            durationMinutes = m
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4. Pemicu 2: By Time (Jadwal Jam)
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = cardColor,
+                        border = BorderStroke(1.dp, if (isByTime) Color(0xFF38BDF8).copy(alpha = 0.5f) else cardBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(Icons.Default.AccessTime, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(16.dp))
+                                    Text("By Time (Jadwal Jam)", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp, color = textPrimary)
+                                }
+                                Switch(
+                                    checked = isByTime,
+                                    onCheckedChange = { isByTime = it },
+                                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color(0xFF38BDF8))
+                                )
+                            }
+                            if (isByTime) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Mulai (0-23)", fontSize = 10.sp, color = textSecondary)
+                                        OutlinedTextField(
+                                            value = sH.toString(),
+                                            onValueChange = { sH = (it.toIntOrNull() ?: 0).coerceIn(0, 23) },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            singleLine = true
+                                        )
+                                    }
+                                    Text("s/d", fontSize = 11.sp, color = textSecondary)
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Selesai (0-23)", fontSize = 10.sp, color = textSecondary)
+                                        OutlinedTextField(
+                                            value = eH.toString(),
+                                            onValueChange = { eH = (it.toIntOrNull() ?: 0).coerceIn(0, 23) },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            singleLine = true
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 5. Pemicu 3: By Launch Count
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = cardColor,
+                        border = BorderStroke(1.dp, if (isByLaunch) AccentRed.copy(alpha = 0.5f) else cardBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(Icons.Default.TouchApp, contentDescription = null, tint = AccentRed, modifier = Modifier.size(16.dp))
+                                    Text("By Launch (Batas Buka)", fontFamily = PoppinsFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.5.sp, color = textPrimary)
+                                }
+                                Switch(
+                                    checked = isByLaunch,
+                                    onCheckedChange = { isByLaunch = it },
+                                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = AccentRed)
+                                )
+                            }
+                            if (isByLaunch) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    listOf(3, 5, 10, 15).forEach { cnt ->
+                                        PillChoice(
+                                            label = "${cnt}x",
+                                            isSelected = maxLaunches == cnt,
+                                            isDark = isDark,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            maxLaunches = cnt
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val finalName = if (name.isBlank()) "Profil Habit" else name.trim()
+                    val updated = initialProfile.copy(
+                        name = finalName,
+                        packages = selectedPkgs,
+                        isByDuration = isByDuration,
+                        durationMinutes = durationMinutes,
+                        isByTime = isByTime,
+                        startHour = sH,
+                        startMinute = sM,
+                        endHour = eH,
+                        endMinute = eM,
+                        isByLaunch = isByLaunch,
+                        maxLaunches = maxLaunches
+                    )
+                    onSave(updated)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
+            ) {
+                Text("Simpan Profil", fontWeight = FontWeight.Bold, color = Color.Black)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Batal", color = textSecondary)
+            }
+        }
+    )
+
+    // Sub-dialog Pemilih Aplikasi Khusus Profil Habit Ini (Dengan Anti-Bentrok)
+    if (showAppPickerSubDialog) {
+        AppBlockPickerDialog(
+            isDark = isDark,
+            appBlockPackages = selectedPkgs,
+            conflictMap = conflictMap,
+            cardColor = cardColor,
+            cardBorder = cardBorder,
+            textPrimary = textPrimary,
+            textSecondary = textSecondary,
+            onTogglePackage = { pkg ->
+                val current = selectedPkgs.toMutableSet()
+                if (current.contains(pkg)) {
+                    current.remove(pkg)
+                } else {
+                    current.add(pkg)
+                }
+                selectedPkgs = current
+            },
+            onDismiss = { showAppPickerSubDialog = false }
+        )
+    }
+}
+
+// 5. DIALOG PILIH RENTANG JAM (BY TIME SCHEDULE)
 @Composable
 fun TimeRangePickerDialog(
     currentSchedule: Pair<Pair<Int, Int>, Pair<Int, Int>>,

@@ -19,6 +19,8 @@ import android.provider.Settings
 import android.text.TextUtils
 import java.text.SimpleDateFormat
 import java.util.*
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class AppDataUsage(
     val packageName: String,
@@ -37,7 +39,25 @@ data class SelectableApp(
     val category: String,
     val isInstalled: Boolean = true,
     val isSystemApp: Boolean = false,
-    val isSelected: Boolean
+    val isSelected: Boolean,
+    val isAssignedElsewhere: Boolean = false,
+    val assignedLabel: String = ""
+)
+
+data class HabitProfile(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String = "Profil Habit",
+    val isEnabled: Boolean = true,
+    val packages: Set<String> = emptySet(),
+    val isByDuration: Boolean = true,
+    val durationMinutes: Int = 20,
+    val isByTime: Boolean = false,
+    val startHour: Int = 22,
+    val startMinute: Int = 0,
+    val endHour: Int = 5,
+    val endMinute: Int = 0,
+    val isByLaunch: Boolean = false,
+    val maxLaunches: Int = 5
 )
 
 data class QuotaStatus(
@@ -265,7 +285,16 @@ object QuotaManager {
     fun setAppBlockSessionLimitMinutes(context: Context, min: Int) = getPrefs(context).edit().putInt(KEY_APPBLOCK_LIMIT_MIN, min).apply()
 
     fun isAppBlockMonitored(context: Context, packageName: String): Boolean {
-        return getAppBlockPackages(context).contains(packageName) || isInstagram(packageName) || isBrowser(packageName)
+        if (getAppBlockPackages(context).contains(packageName) || isInstagram(packageName) || isBrowser(packageName)) {
+            return true
+        }
+        val habitProfiles = getHabitProfiles(context)
+        for (profile in habitProfiles) {
+            if (profile.isEnabled && profile.packages.contains(packageName)) {
+                return true
+            }
+        }
+        return false
     }
 
     fun getAppDisplayName(context: Context, pkg: String): String {
@@ -317,6 +346,24 @@ object QuotaManager {
 
     fun getAppQuotaBudgetMb(context: Context): Float = getPrefs(context).getFloat(KEY_APP_KUOTA_BUDGET_MB, 500f)
     fun setAppQuotaBudgetMb(context: Context, mb: Float) = getPrefs(context).edit().putFloat(KEY_APP_KUOTA_BUDGET_MB, mb).apply()
+
+    // Jatah Kuota Kustom Per Aplikasi (Contoh: YouTube 500 MB, TikTok 300 MB)
+    private const val KEY_APP_SPECIFIC_BUDGET_PREFIX = "app_specific_budget_mb_"
+
+    fun getAppSpecificBudgetMb(context: Context, pkg: String): Float {
+        val key = "$KEY_APP_SPECIFIC_BUDGET_PREFIX$pkg"
+        val prefs = getPrefs(context)
+        return if (prefs.contains(key)) {
+            prefs.getFloat(key, 100f)
+        } else {
+            getAppQuotaBudgetMb(context) // Fallback default app quota budget
+        }
+    }
+
+    fun setAppSpecificBudgetMb(context: Context, pkg: String, mb: Float) {
+        val key = "$KEY_APP_SPECIFIC_BUDGET_PREFIX$pkg"
+        getPrefs(context).edit().putFloat(key, mb.coerceAtLeast(1f)).apply()
+    }
 
     // Mengambil pemakaian data (Rx + Tx) per UID menggunakan NetworkStatsManager.querySummary
     private fun getUidUsageSummaryMap(context: Context): Map<Int, Pair<Long, Long>> {
@@ -491,6 +538,157 @@ object QuotaManager {
         }
     }
 
+    // ========================================================
+    // HABIT PROFILES (AppBlock-style Dynamic Profiles)
+    // ========================================================
+    private const val KEY_HABIT_PROFILES_JSON = "habit_profiles_json"
+
+    fun getHabitProfiles(context: Context): List<HabitProfile> {
+        val jsonStr = getPrefs(context).getString(KEY_HABIT_PROFILES_JSON, null)
+        if (jsonStr.isNullOrBlank()) {
+            return getDefaultHabitProfiles()
+        }
+        return try {
+            val jsonArray = JSONArray(jsonStr)
+            val list = mutableListOf<HabitProfile>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val pkgsArray = obj.optJSONArray("packages") ?: JSONArray()
+                val pkgSet = mutableSetOf<String>()
+                for (j in 0 until pkgsArray.length()) {
+                    pkgSet.add(pkgsArray.getString(j))
+                }
+                list.add(
+                    HabitProfile(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        name = obj.optString("name", "Profil Habit"),
+                        isEnabled = obj.optBoolean("isEnabled", true),
+                        packages = pkgSet,
+                        isByDuration = obj.optBoolean("isByDuration", true),
+                        durationMinutes = obj.optInt("durationMinutes", 20),
+                        isByTime = obj.optBoolean("isByTime", false),
+                        startHour = obj.optInt("startHour", 22),
+                        startMinute = obj.optInt("startMinute", 0),
+                        endHour = obj.optInt("endHour", 5),
+                        endMinute = obj.optInt("endMinute", 0),
+                        isByLaunch = obj.optBoolean("isByLaunch", false),
+                        maxLaunches = obj.optInt("maxLaunches", 5)
+                    )
+                )
+            }
+            list
+        } catch (_: Exception) {
+            getDefaultHabitProfiles()
+        }
+    }
+
+    fun saveHabitProfiles(context: Context, profiles: List<HabitProfile>) {
+        val jsonArray = JSONArray()
+        for (p in profiles) {
+            val obj = JSONObject().apply {
+                put("id", p.id)
+                put("name", p.name)
+                put("isEnabled", p.isEnabled)
+                val pkgs = JSONArray()
+                p.packages.forEach { pkgs.put(it) }
+                put("packages", pkgs)
+                put("isByDuration", p.isByDuration)
+                put("durationMinutes", p.durationMinutes)
+                put("isByTime", p.isByTime)
+                put("startHour", p.startHour)
+                put("startMinute", p.startMinute)
+                put("endHour", p.endHour)
+                put("endMinute", p.endMinute)
+                put("isByLaunch", p.isByLaunch)
+                put("maxLaunches", p.maxLaunches)
+            }
+            jsonArray.put(obj)
+        }
+        getPrefs(context).edit().putString(KEY_HABIT_PROFILES_JSON, jsonArray.toString()).apply()
+    }
+
+    private fun getDefaultHabitProfiles(): List<HabitProfile> {
+        return listOf(
+            HabitProfile(
+                id = "default_sleep_profile",
+                name = "Jadwal Tidur Malam",
+                isEnabled = false,
+                packages = emptySet(),
+                isByDuration = false,
+                durationMinutes = 20,
+                isByTime = true,
+                startHour = 22,
+                startMinute = 0,
+                endHour = 5,
+                endMinute = 0,
+                isByLaunch = false,
+                maxLaunches = 5
+            )
+        )
+    }
+
+    fun saveOrUpdateHabitProfile(context: Context, profile: HabitProfile) {
+        val list = getHabitProfiles(context).toMutableList()
+        val index = list.indexOfFirst { it.id == profile.id }
+        if (index >= 0) {
+            list[index] = profile
+        } else {
+            list.add(profile)
+        }
+        saveHabitProfiles(context, list)
+    }
+
+    fun deleteHabitProfile(context: Context, profileId: String) {
+        val list = getHabitProfiles(context).filter { it.id != profileId }
+        saveHabitProfiles(context, list)
+    }
+
+    // Pemetaan Kepemilikan Aplikasi untuk Validasi Anti-Bentrok
+    // Setiap aplikasi hanya boleh berada di 1 tempat aktif (Pengaman Kuota atau salah satu Profil Habit)
+    fun getAppAssignmentMap(context: Context, excludeHabitProfileId: String? = null, excludeQuota: Boolean = false): Map<String, String> {
+        val map = mutableMapOf<String, String>()
+
+        // 1. Pengaman Kuota (AppBlock Packages)
+        if (!excludeQuota) {
+            val quotaApps = getAppBlockPackages(context)
+            for (pkg in quotaApps) {
+                map[pkg] = "Pengaman Kuota"
+            }
+        }
+
+        // 2. Dynamic Habit Profiles
+        val profiles = getHabitProfiles(context)
+        for (profile in profiles) {
+            if (excludeHabitProfileId != null && profile.id == excludeHabitProfileId) {
+                continue
+            }
+            for (pkg in profile.packages) {
+                map[pkg] = "Profil \"${profile.name}\""
+            }
+        }
+
+        return map
+    }
+
+    fun isProfileTimeActive(profile: HabitProfile): Boolean {
+        if (!profile.isEnabled || !profile.isByTime) return false
+        val sH = profile.startHour
+        val sM = profile.startMinute
+        val eH = profile.endHour
+        val eM = profile.endMinute
+        val startMins = sH * 60 + sM
+        val endMins = eH * 60 + eM
+
+        val now = Calendar.getInstance()
+        val currentMins = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
+
+        return if (startMins <= endMins) {
+            currentMins in startMins..endMins
+        } else {
+            currentMins >= startMins || currentMins <= endMins
+        }
+    }
+
     // Launch Count Tracking per App per Day
     fun getLaunchCountToday(context: Context, pkg: String): Int {
         val todayStr = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
@@ -540,7 +738,11 @@ object QuotaManager {
         }
     }
 
-    fun getAllCandidateApps(context: Context, selectedPackages: Set<String> = getBlackholePackages(context)): List<SelectableApp> {
+    fun getAllCandidateApps(
+        context: Context,
+        selectedPackages: Set<String> = getBlackholePackages(context),
+        conflictMap: Map<String, String> = emptyMap()
+    ): List<SelectableApp> {
         val pm = context.packageManager
         val installedApps = try {
             pm.getInstalledApplications(PackageManager.GET_META_DATA)
@@ -569,6 +771,9 @@ object QuotaManager {
                 else -> "user"
             }
 
+            val isAssignedElsewhere = conflictMap.containsKey(pkg)
+            val assignedLabel = conflictMap[pkg] ?: ""
+
             result.add(
                 SelectableApp(
                     packageName = pkg,
@@ -576,14 +781,17 @@ object QuotaManager {
                     category = category,
                     isInstalled = true,
                     isSystemApp = isSystem,
-                    isSelected = selectedPackages.contains(pkg)
+                    isSelected = selectedPackages.contains(pkg),
+                    isAssignedElsewhere = isAssignedElsewhere,
+                    assignedLabel = assignedLabel
                 )
             )
         }
 
-        // Sort: Aplikasi terpilih di atas, lalu user apps, lalu system apps
+        // Sort: Terpilih -> Belum digunakan (bukan assigned elsewhere) -> User apps -> Nama
         return result.sortedWith(
             compareByDescending<SelectableApp> { it.isSelected }
+                .thenBy { it.isAssignedElsewhere }
                 .thenBy { it.isSystemApp }
                 .thenBy { it.appName.lowercase(Locale.getDefault()) }
         )

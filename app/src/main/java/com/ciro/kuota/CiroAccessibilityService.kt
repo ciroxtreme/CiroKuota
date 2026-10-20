@@ -194,47 +194,72 @@ class CiroAccessibilityService : AccessibilityService() {
             val isManualLocked = manualUntil > now
 
             val isMonitored = QuotaManager.isAppBlockMonitored(applicationContext, pkg)
+            val isTargetQuotaApp = QuotaManager.getAppBlockPackages(applicationContext).contains(pkg)
             if (!isMonitored && !isKillswitch && !isCondByKuota) return
 
             val appName = QuotaManager.getAppDisplayName(applicationContext, pkg)
             var reason: String? = null
 
-            // Periksa kondisi satu per satu
-            val isCondByTime = QuotaManager.isCurrentTimeInSchedule(applicationContext)
-            val isCondByLaunch = QuotaManager.isCondByLaunchActive(applicationContext)
-            val maxLaunches = QuotaManager.getMaxLaunchesPerDay(applicationContext)
-            val launchCount = QuotaManager.getLaunchCountToday(applicationContext, pkg)
+            // 1. Kondisi Global / Strict Mode / Killswitch
+            if (isKillswitch) {
+                reason = "🚨 Stop Data Aktif! Akses ke $appName sementara dihentikan total."
+            } else if (isManualLocked) {
+                val remainingMin = ((manualUntil - now) / 60000) + 1
+                reason = "🔒 Kunci Ketat (Strict Mode) aktif! $appName terkunci selama $remainingMin menit lagi."
+            } else if (isCondByKuota) {
+                reason = "📊 By Kuota Utama: Budget Total Kuota Internet HP (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName diblokir otomatis."
+            }
 
-            val isCondByDuration = QuotaManager.isCondByDurationActive(applicationContext)
-            val sessionLimitSec = QuotaManager.getAppBlockSessionLimitMinutes(applicationContext) * 60L
+            // 2. Kondisi Tab Pengaman Kuota (By Custom Quota per App)
+            if (reason == null && isTargetQuotaApp) {
+                val isCondByAppQuota = QuotaManager.isCondByAppQuotaActive(applicationContext)
+                val appSpecificBudgetMb = QuotaManager.getAppSpecificBudgetMb(applicationContext, pkg)
+                val appUsageMb = if (isCondByAppQuota) QuotaManager.getAppMonitoredUsageMb(applicationContext, pkg) else 0f
+                if (isCondByAppQuota && appUsageMb >= appSpecificBudgetMb) {
+                    reason = "📊 By Kuota App: Pemakaian $appName (${String.format(Locale.US, "%.1f", appUsageMb)} MB) telah mencapai batas limit (${appSpecificBudgetMb.toInt()} MB)!"
+                }
+            }
 
-            val isCondByAppQuota = QuotaManager.isCondByAppQuotaActive(applicationContext)
-            val appBudgetMb = QuotaManager.getAppQuotaBudgetMb(applicationContext)
-            val appUsageMb = if (isCondByAppQuota) QuotaManager.getAppMonitoredUsageMb(applicationContext, pkg) else 0f
-            val isAppQuotaExceeded = isCondByAppQuota && appUsageMb >= appBudgetMb
+            // 3. Kondisi Tab Habit Blocker (Profil Dinamis: By Duration, By Time, By Launch)
+            if (reason == null) {
+                val habitProfiles = QuotaManager.getHabitProfiles(applicationContext)
+                for (profile in habitProfiles) {
+                    if (!profile.isEnabled || !profile.packages.contains(pkg)) continue
 
-            when {
-                isKillswitch -> {
-                    reason = "🚨 Stop Data Aktif! Akses ke $appName sementara dihentikan total."
+                    val launchCount = QuotaManager.getLaunchCountToday(applicationContext, pkg)
+                    val isProfileTime = QuotaManager.isProfileTimeActive(profile)
+                    val profileDurationSec = profile.durationMinutes * 60L
+
+                    when {
+                        profile.isByTime && isProfileTime -> {
+                            val timeStr = String.format(Locale.US, "%02d:%02d - %02d:%02d", profile.startHour, profile.startMinute, profile.endHour, profile.endMinute)
+                            reason = "🕒 Profil Habit \"${profile.name}\" (By Time): $appName sedang dalam jadwal jam gembok ($timeStr)."
+                        }
+                        profile.isByLaunch && launchCount > profile.maxLaunches -> {
+                            reason = "🔢 Profil Habit \"${profile.name}\" (By Launch): Batas membuka $appName hari ini (maks ${profile.maxLaunches} kali) telah habis!"
+                        }
+                        profile.isByDuration && currentSessionSeconds >= profileDurationSec -> {
+                            reason = "⏳ Profil Habit \"${profile.name}\" (By Duration): Batas waktu sesi $appName (${profile.durationMinutes} menit) telah tercapai!"
+                        }
+                    }
+
+                    if (reason != null) break
                 }
-                isManualLocked -> {
-                    val remainingMin = ((manualUntil - now) / 60000) + 1
-                    reason = "🔒 Kunci Ketat (Strict Mode) aktif! $appName terkunci selama $remainingMin menit lagi."
-                }
-                isCondByAppQuota && isAppQuotaExceeded -> {
-                    reason = "📊 By Kuota App: Pemakaian $appName (${String.format(Locale.US, "%.1f", appUsageMb)} MB) telah mencapai batas budget (${appBudgetMb.toInt()} MB)!"
-                }
-                isCondByKuota -> {
-                    reason = "📊 By Kuota Utama: Budget Total Kuota Internet HP (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName diblokir otomatis."
-                }
-                isCondByTime -> {
-                    reason = "🕒 By Time: $appName sedang berada di dalam jadwal jam gembok / tidur."
-                }
-                isCondByLaunch && launchCount > maxLaunches -> {
-                    reason = "🔢 By Launch: Batas membuka $appName hari ini (maks $maxLaunches kali) telah habis!"
-                }
-                isCondByDuration && currentSessionSeconds >= sessionLimitSec -> {
-                    reason = "⏳ By Duration: Batas Waktu Sesi $appName (${sessionLimitSec / 60} menit) telah tercapai!"
+            }
+
+            // Fallback backward compatibility jika masih ada pemicu lama yang aktif
+            if (reason == null && isTargetQuotaApp) {
+                val isCondByTime = QuotaManager.isCurrentTimeInSchedule(applicationContext)
+                val isCondByLaunch = QuotaManager.isCondByLaunchActive(applicationContext)
+                val maxLaunches = QuotaManager.getMaxLaunchesPerDay(applicationContext)
+                val launchCount = QuotaManager.getLaunchCountToday(applicationContext, pkg)
+                val isCondByDuration = QuotaManager.isCondByDurationActive(applicationContext)
+                val sessionLimitSec = QuotaManager.getAppBlockSessionLimitMinutes(applicationContext) * 60L
+
+                when {
+                    isCondByTime -> reason = "🕒 By Time: $appName sedang berada di dalam jadwal jam gembok / tidur."
+                    isCondByLaunch && launchCount > maxLaunches -> reason = "🔢 By Launch: Batas membuka $appName hari ini (maks $maxLaunches kali) telah habis!"
+                    isCondByDuration && currentSessionSeconds >= sessionLimitSec -> reason = "⏳ By Duration: Batas Waktu Sesi $appName (${sessionLimitSec / 60} menit) telah tercapai!"
                 }
             }
 
