@@ -442,10 +442,6 @@ object QuotaManager {
         return getAppMonitoredUsageMb(context, packageName)
     }
 
-    fun getAppUsageTodayMb(context: Context, packageName: String): Float {
-        return getAppMonitoredUsageMb(context, packageName)
-    }
-
     fun isCondByDurationActive(context: Context): Boolean = getPrefs(context).getBoolean(KEY_COND_DURATION, true)
     fun setCondByDurationActive(context: Context, active: Boolean) = getPrefs(context).edit().putBoolean(KEY_COND_DURATION, active).apply()
 
