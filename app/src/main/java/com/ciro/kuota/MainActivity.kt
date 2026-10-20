@@ -44,6 +44,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.content.pm.PackageManager
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.ImageBitmap
 import com.ciro.kuota.ui.theme.*
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -414,19 +420,13 @@ fun CiroKuotaMainScreen(
                             } else {
                                 isCondByAppQuota = true
                                 QuotaManager.setCondByAppQuotaActive(context, true)
-                                QuotaManager.resetAllAppQuotaBaselines(context)
-                                Toast.makeText(context, "By Kuota Aplikasi aktif! Kuota dihitung mulai dari 0 MB.", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "By Kuota Aplikasi aktif (Mengikuti pemakaian asli hari ini)!", Toast.LENGTH_SHORT).show()
                             }
                         },
                         onAppQuotaBudgetChange = { mb ->
                             appQuotaBudgetMb = mb
                             QuotaManager.setAppQuotaBudgetMb(context, mb)
-                            QuotaManager.resetAllAppQuotaBaselines(context)
-                            Toast.makeText(context, "Batas kuota aplikasi diubah ke ${if (mb >= 1024f) "1 GB" else "${mb.toInt()} MB"} & direset ke 0 MB!", Toast.LENGTH_SHORT).show()
-                        },
-                        onResetAppQuotaUsage = {
-                            QuotaManager.resetAllAppQuotaBaselines(context)
-                            Toast.makeText(context, "🔄 Kuota aplikasi berhasil direset ke 0 MB!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Batas kuota aplikasi diubah ke ${if (mb >= 1024f) "1 GB" else "${mb.toInt()} MB"}!", Toast.LENGTH_SHORT).show()
                         },
                         onToggleCondByDuration = {
                             if (isCondByDuration) {
@@ -1001,7 +1001,6 @@ fun TabSchedulesScreen(
     onToggleCondByKuota: () -> Unit,
     onToggleCondByAppQuota: () -> Unit,
     onAppQuotaBudgetChange: (Float) -> Unit,
-    onResetAppQuotaUsage: () -> Unit,
     onToggleCondByDuration: () -> Unit,
     onToggleCondByTime: () -> Unit,
     onToggleCondByLaunch: () -> Unit,
@@ -1253,31 +1252,6 @@ fun TabSchedulesScreen(
                                         color = if (appQuotaBudgetMb !in listOf(100f, 250f, 500f, 750f, 1024f)) AccentAmber else textSecondary
                                     )
                                 }
-                            }
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            OutlinedButton(
-                                onClick = onResetAppQuotaUsage,
-                                shape = RoundedCornerShape(10.dp),
-                                border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.5f)),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = AccentAmber
-                                ),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                modifier = Modifier.height(34.dp)
-                            ) {
-                                Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(14.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Reset Kuota ke 0 MB",
-                                    fontFamily = PoppinsFontFamily,
-                                    fontWeight = FontWeight.SemiBold,
-                                    fontSize = 11.sp
-                                )
                             }
                         }
 
@@ -3776,64 +3750,127 @@ fun AppUsageRow(
     textPrimary: Color,
     textSecondary: Color
 ) {
+    val context = LocalContext.current
+    val pm = context.packageManager
+    val appIcon: ImageBitmap? = remember(app.packageName) {
+        try {
+            val dr = pm.getApplicationIcon(app.packageName)
+            val w = if (dr.intrinsicWidth > 0) dr.intrinsicWidth else 96
+            val h = if (dr.intrinsicHeight > 0) dr.intrinsicHeight else 96
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            dr.setBounds(0, 0, canvas.width, canvas.height)
+            dr.draw(canvas)
+            bmp.asImageBitmap()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         color = cardBg,
         border = BorderStroke(1.dp, cardBorder),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                val icon = when (app.iconCategory) {
-                    "instagram" -> Icons.Default.CameraAlt
-                    "browser" -> Icons.Default.Language
-                    "youtube" -> Icons.Default.PlayCircle
-                    "tiktok" -> Icons.Default.MusicNote
-                    else -> Icons.Default.Apps
-                }
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = if (app.isMonitored) AccentAmber else textSecondary,
-                    modifier = Modifier.size(20.dp)
-                )
-
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = app.appName,
-                            fontFamily = PoppinsFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.5.sp,
-                            color = textPrimary
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (appIcon != null) {
+                        Image(
+                            bitmap = appIcon,
+                            contentDescription = app.appName,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
                         )
-                        if (app.isMonitored) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = AccentAmber.copy(alpha = 0.15f)
-                            ) {
-                                Text(
-                                    text = "Target Lock",
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontSize = 9.sp,
-                                    color = AccentAmber,
-                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                )
-                            }
+                    } else {
+                        val fallbackIcon = when (app.iconCategory) {
+                            "instagram" -> Icons.Default.CameraAlt
+                            "browser" -> Icons.Default.Language
+                            "youtube" -> Icons.Default.PlayCircle
+                            "tiktok" -> Icons.Default.MusicNote
+                            else -> Icons.Default.Apps
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(cardBorder.copy(alpha = 0.3f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = fallbackIcon,
+                                contentDescription = null,
+                                tint = if (app.isMonitored) AccentAmber else textSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = app.appName,
+                                fontFamily = PoppinsFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                                color = textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (app.isMonitored) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = AccentAmber.copy(alpha = 0.15f)
+                                ) {
+                                    Text(
+                                        text = "Target Lock",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontSize = 8.5.sp,
+                                        color = AccentAmber,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = app.packageName,
+                            fontFamily = JetBrainsMonoFontFamily,
+                            fontSize = 9.5.sp,
+                            color = textSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = app.packageName,
+                        text = QuotaManager.formatBytes(app.bytesUsed),
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = if (app.bytesUsed > 500 * 1024 * 1024) AccentRed else textPrimary
+                    )
+                    Text(
+                        text = String.format(Locale.US, "%.2f%%", app.percentOfTotal),
                         fontFamily = JetBrainsMonoFontFamily,
                         fontSize = 10.sp,
                         color = textSecondary
@@ -3841,13 +3878,35 @@ fun AppUsageRow(
                 }
             }
 
-            Text(
-                text = QuotaManager.formatBytes(app.bytesUsed),
-                fontFamily = JetBrainsMonoFontFamily,
-                fontWeight = FontWeight.Bold,
-                fontSize = 12.5.sp,
-                color = if (app.bytesUsed > 500 * 1024 * 1024) AccentRed else textPrimary
-            )
+            // Dual Progress Bar: Biru (Download/Rx) & Hijau (Upload/Tx) ala aplikasi pemantau data
+            val total = (app.rxBytes + app.txBytes).coerceAtLeast(1L).toFloat()
+            val rxRatio = (app.rxBytes.toFloat() / total).coerceIn(0f, 1f)
+            val txRatio = (app.txBytes.toFloat() / total).coerceIn(0f, 1f)
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(cardBorder.copy(alpha = 0.35f))
+            ) {
+                if (rxRatio > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .weight(rxRatio.coerceAtLeast(0.01f))
+                            .fillMaxHeight()
+                            .background(Color(0xFF00A2FF)) // Biru terang (Download)
+                    )
+                }
+                if (txRatio > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .weight(txRatio.coerceAtLeast(0.01f))
+                            .fillMaxHeight()
+                            .background(Color(0xFF00E676)) // Hijau terang (Upload)
+                    )
+                }
+            }
         }
     }
 }

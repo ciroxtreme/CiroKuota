@@ -24,7 +24,10 @@ data class AppDataUsage(
     val packageName: String,
     val appName: String,
     val bytesUsed: Long,
-    val isMonitored: Boolean,
+    val rxBytes: Long = 0L,
+    val txBytes: Long = 0L,
+    val percentOfTotal: Float = 0f,
+    val isMonitored: Boolean = false,
     val iconCategory: String = "general"
 )
 
@@ -315,117 +318,116 @@ object QuotaManager {
     fun getAppQuotaBudgetMb(context: Context): Float = getPrefs(context).getFloat(KEY_APP_KUOTA_BUDGET_MB, 500f)
     fun setAppQuotaBudgetMb(context: Context, mb: Float) = getPrefs(context).edit().putFloat(KEY_APP_KUOTA_BUDGET_MB, mb).apply()
 
+    // Mengambil pemakaian data (Rx + Tx) per UID menggunakan NetworkStatsManager.querySummary
+    private fun getUidUsageSummaryMap(context: Context): Map<Int, Pair<Long, Long>> {
+        val map = mutableMapOf<Int, Pair<Long, Long>>() // uid -> (rx, tx)
+        val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager ?: return map
+        if (!hasUsageStatsPermission(context)) return map
+
+        val startTime = getMidnightTimestamp()
+        val endTime = System.currentTimeMillis()
+
+        // 1. Query Wi-Fi
+        try {
+            val wifiStats = nsm.querySummary(ConnectivityManager.TYPE_WIFI, null, startTime, endTime)
+            val bucket = NetworkStats.Bucket()
+            while (wifiStats.hasNextBucket()) {
+                wifiStats.getNextBucket(bucket)
+                val uid = bucket.uid
+                val current = map[uid] ?: Pair(0L, 0L)
+                map[uid] = Pair(current.first + bucket.rxBytes, current.second + bucket.txBytes)
+            }
+            wifiStats.close()
+        } catch (_: Exception) {}
+
+        // 2. Query Mobile Data
+        try {
+            val mobileStats = nsm.querySummary(ConnectivityManager.TYPE_MOBILE, null, startTime, endTime)
+            val bucket = NetworkStats.Bucket()
+            while (mobileStats.hasNextBucket()) {
+                mobileStats.getNextBucket(bucket)
+                val uid = bucket.uid
+                val current = map[uid] ?: Pair(0L, 0L)
+                map[uid] = Pair(current.first + bucket.rxBytes, current.second + bucket.txBytes)
+            }
+            mobileStats.close()
+        } catch (_: Exception) {}
+
+        return map
+    }
+
     // Mengambil akumulasi trafik raw aplikasi hari ini (Wi-Fi + Seluler/Mobile Data)
     fun getRawAppUsageBytes(context: Context, packageName: String): Long {
-        var totalBytes = 0L
+        val detail = getRawAppUsageDetail(context, packageName)
+        return detail.first + detail.second
+    }
+
+    fun getRawAppUsageDetail(context: Context, packageName: String): Pair<Long, Long> {
+        var rxTotal = 0L
+        var txTotal = 0L
         try {
             val pm = context.packageManager
             val appInfo = pm.getApplicationInfo(packageName, 0)
-            val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
-            val hasPerm = hasUsageStatsPermission(context)
-            if (hasPerm && nsm != null) {
-                val startTime = getMidnightTimestamp()
-                val endTime = System.currentTimeMillis()
+            val uid = appInfo.uid
 
-                // 1. Wi-Fi
-                try {
-                    val wifiStats = nsm.queryDetailsForUid(
-                        ConnectivityManager.TYPE_WIFI,
-                        null,
-                        startTime,
-                        endTime,
-                        appInfo.uid
-                    )
-                    val bucket = NetworkStats.Bucket()
-                    while (wifiStats.hasNextBucket()) {
-                        wifiStats.getNextBucket(bucket)
-                        totalBytes += bucket.rxBytes + bucket.txBytes
-                    }
-                    wifiStats.close()
-                } catch (_: Exception) {}
+            // Metode 1: querySummary system-wide (sangat akurat ala aplikasi pemantau data sebelah)
+            val summaryMap = getUidUsageSummaryMap(context)
+            if (summaryMap.containsKey(uid)) {
+                val pair = summaryMap[uid] ?: Pair(0L, 0L)
+                rxTotal += pair.first
+                txTotal += pair.second
+            }
 
-                // 2. Mobile / Seluler
-                try {
-                    val mobileStats = nsm.queryDetailsForUid(
-                        ConnectivityManager.TYPE_MOBILE,
-                        null,
-                        startTime,
-                        endTime,
-                        appInfo.uid
-                    )
-                    val bucket = NetworkStats.Bucket()
-                    while (mobileStats.hasNextBucket()) {
-                        mobileStats.getNextBucket(bucket)
-                        totalBytes += bucket.rxBytes + bucket.txBytes
-                    }
-                    mobileStats.close()
-                } catch (_: Exception) {}
+            // Metode 2: Jika querySummary belum mencakup atau bernilai 0, coba queryDetailsForUid
+            if (rxTotal + txTotal <= 0L) {
+                val nsm = context.getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
+                if (hasUsageStatsPermission(context) && nsm != null) {
+                    val startTime = getMidnightTimestamp()
+                    val endTime = System.currentTimeMillis()
+
+                    // Wi-Fi
+                    try {
+                        val wifiStats = nsm.queryDetailsForUid(ConnectivityManager.TYPE_WIFI, null, startTime, endTime, uid)
+                        val bucket = NetworkStats.Bucket()
+                        while (wifiStats.hasNextBucket()) {
+                            wifiStats.getNextBucket(bucket)
+                            rxTotal += bucket.rxBytes
+                            txTotal += bucket.txBytes
+                        }
+                        wifiStats.close()
+                    } catch (_: Exception) {}
+
+                    // Mobile
+                    try {
+                        val mobileStats = nsm.queryDetailsForUid(ConnectivityManager.TYPE_MOBILE, null, startTime, endTime, uid)
+                        val bucket = NetworkStats.Bucket()
+                        while (mobileStats.hasNextBucket()) {
+                            mobileStats.getNextBucket(bucket)
+                            rxTotal += bucket.rxBytes
+                            txTotal += bucket.txBytes
+                        }
+                        mobileStats.close()
+                    } catch (_: Exception) {}
+                }
+            }
+
+            // Metode 3: Fallback ke TrafficStats jika tetap 0
+            if (rxTotal + txTotal <= 0L) {
+                val rx = TrafficStats.getUidRxBytes(uid)
+                val tx = TrafficStats.getUidTxBytes(uid)
+                if (rx > 0 || tx > 0) {
+                    rxTotal = rx.coerceAtLeast(0L)
+                    txTotal = tx.coerceAtLeast(0L)
+                }
             }
         } catch (_: Exception) {}
 
-        // Fallback ke TrafficStats jika NetworkStatsManager bernilai 0
-        if (totalBytes <= 0L) {
-            try {
-                val pm = context.packageManager
-                val appInfo = pm.getApplicationInfo(packageName, 0)
-                val rx = TrafficStats.getUidRxBytes(appInfo.uid)
-                val tx = TrafficStats.getUidTxBytes(appInfo.uid)
-                if (rx > 0 || tx > 0) {
-                    totalBytes = rx.coerceAtLeast(0L) + tx.coerceAtLeast(0L)
-                }
-            } catch (_: Exception) {}
-        }
-
-        return totalBytes
+        return Pair(rxTotal, txTotal)
     }
 
-    // Reset baseline kuota per aplikasi agar hitungan kuota aplikasi dihitung mulai 0 MB dari titik ini
-    fun resetAppQuotaBaseline(context: Context, packageName: String) {
-        val raw = getRawAppUsageBytes(context, packageName)
-        getPrefs(context).edit().putLong("${KEY_APP_KUOTA_BASE_PREFIX}$packageName", raw).apply()
-    }
-
-    // Reset baseline seluruh aplikasi yang diproteksi
-    fun resetAllAppQuotaBaselines(context: Context) {
-        val prefs = getPrefs(context)
-        val editor = prefs.edit()
-        val todayStr = getTodayDateString()
-        editor.putString(KEY_APP_KUOTA_BASE_DATE, todayStr)
-
-        val candidatePackages = getAppBlockPackages(context) + getBlackholePackages(context) + listOf("com.android.chrome")
-        for (pkg in candidatePackages) {
-            val raw = getRawAppUsageBytes(context, pkg)
-            editor.putLong("${KEY_APP_KUOTA_BASE_PREFIX}$pkg", raw)
-        }
-        editor.apply()
-    }
-
-    // Menghitung pemakaian kuota aplikasi yang dimonitor (Delta pemakaian sejak disetel/direset, bukan total bawaan sistem)
+    // Menghitung pemakaian kuota aplikasi yang dimonitor (Langsung mengikuti hitungan nyata hari ini, tanpa reset baseline semu)
     fun getAppMonitoredUsageBytes(context: Context, packageName: String): Long {
-        val prefs = getPrefs(context)
-        val todayStr = getTodayDateString()
-        val lastDate = prefs.getString(KEY_APP_KUOTA_BASE_DATE, "")
-
-        val raw = getRawAppUsageBytes(context, packageName)
-        val key = "${KEY_APP_KUOTA_BASE_PREFIX}$packageName"
-
-        // Jika hari berganti atau belum ada baseline: buat baseline awal sama dengan raw saat ini
-        if (lastDate != todayStr || !prefs.contains(key)) {
-            prefs.edit()
-                .putString(KEY_APP_KUOTA_BASE_DATE, todayStr)
-                .putLong(key, raw)
-                .apply()
-            return 0L
-        }
-
-        val base = prefs.getLong(key, raw)
-        if (raw < base) {
-            // Misal HP restart sehingga counter reset
-            prefs.edit().putLong(key, raw).apply()
-            return 0L
-        }
-
-        return raw - base
+        return getRawAppUsageBytes(context, packageName)
     }
 
     fun getAppMonitoredUsageMb(context: Context, packageName: String): Float {
@@ -434,6 +436,10 @@ object QuotaManager {
 
     fun getAppUsageTodayBytes(context: Context, packageName: String): Long {
         return getAppMonitoredUsageBytes(context, packageName)
+    }
+
+    fun getAppUsageTodayMb(context: Context, packageName: String): Float {
+        return getAppMonitoredUsageMb(context, packageName)
     }
 
     fun getAppUsageTodayMb(context: Context, packageName: String): Float {
@@ -738,20 +744,70 @@ object QuotaManager {
     fun getTopMonitoredAppsUsage(context: Context): List<AppDataUsage> {
         val pm = context.packageManager
         val list = mutableListOf<AppDataUsage>()
+        val summaryMap = getUidUsageSummaryMap(context)
 
+        // Himpun semua aplikasi yang memiliki aktivitas / terinstal
+        val seenPackages = mutableSetOf<String>()
+        val installedApps = pm.getInstalledApplications(0)
+        val uidToPackage = mutableMapOf<Int, String>()
+        for (app in installedApps) {
+            uidToPackage[app.uid] = app.packageName
+        }
+
+        // 1. Masukkan aplikasi yang tercatat aktif di NetworkStatsManager summary hari ini
+        for ((uid, pair) in summaryMap) {
+            val totalBytes = pair.first + pair.second
+            if (totalBytes <= 0) continue
+
+            val pkg = uidToPackage[uid] ?: pm.getNameForUid(uid) ?: continue
+            // Lewati paket sistem internal murni jika bukan aplikasi user atau launcher
+            if (pkg == "android" || pkg.startsWith("com.android.providers.telephony")) continue
+            if (seenPackages.contains(pkg)) continue
+            seenPackages.add(pkg)
+
+            try {
+                val appInfo = pm.getApplicationInfo(pkg, 0)
+                val label = pm.getApplicationLabel(appInfo).toString()
+                val category = when {
+                    isInstagram(pkg) -> "instagram"
+                    isBrowser(pkg) -> "browser"
+                    pkg.contains("youtube") -> "youtube"
+                    pkg.contains("tiktok") || pkg.contains("musically") -> "tiktok"
+                    else -> "social"
+                }
+
+                list.add(
+                    AppDataUsage(
+                        packageName = pkg,
+                        appName = label,
+                        bytesUsed = totalBytes,
+                        rxBytes = pair.first,
+                        txBytes = pair.second,
+                        isMonitored = isTargetMonitored(context, pkg) || isAppBlockMonitored(context, pkg),
+                        iconCategory = category
+                    )
+                )
+            } catch (_: Exception) {}
+        }
+
+        // 2. Tambahkan kandidat paket prioritas jika belum masuk daftar
         val candidatePackages = (getBlackholePackages(context) + getAppBlockPackages(context) + listOf(
             "com.google.android.youtube",
+            "com.zhiliaoapp.musically.go",
             "com.zhiliaoapp.musically",
+            "com.ss.android.ugc.aweme",
             "com.whatsapp",
             "org.telegram.messenger",
             "com.android.chrome"
         )).distinct()
 
         for (pkg in candidatePackages) {
+            if (seenPackages.contains(pkg)) continue
             try {
                 val appInfo = pm.getApplicationInfo(pkg, 0)
                 val label = pm.getApplicationLabel(appInfo).toString()
-                val bytes = getRawAppUsageBytes(context, pkg)
+                val detail = getRawAppUsageDetail(context, pkg)
+                val totalBytes = detail.first + detail.second
 
                 val category = when {
                     isInstagram(pkg) -> "instagram"
@@ -765,17 +821,23 @@ object QuotaManager {
                     AppDataUsage(
                         packageName = pkg,
                         appName = label,
-                        bytesUsed = bytes,
+                        bytesUsed = totalBytes,
+                        rxBytes = detail.first,
+                        txBytes = detail.second,
                         isMonitored = isTargetMonitored(context, pkg) || isAppBlockMonitored(context, pkg),
                         iconCategory = category
                     )
                 )
-            } catch (_: PackageManager.NameNotFoundException) {
-                // App not installed
-            }
+                seenPackages.add(pkg)
+            } catch (_: PackageManager.NameNotFoundException) {}
         }
 
-        return list.sortedByDescending { it.bytesUsed }
+        // Hitung total penggunaan keseluruhan untuk persentase kontribusi per aplikasi
+        val grandTotal = list.sumOf { it.bytesUsed }.coerceAtLeast(1L)
+        val sorted = list.sortedByDescending { it.bytesUsed }
+        return sorted.map {
+            it.copy(percentOfTotal = (it.bytesUsed.toFloat() / grandTotal.toFloat()) * 100f)
+        }
     }
 
     fun getTodayDateString(): String {
