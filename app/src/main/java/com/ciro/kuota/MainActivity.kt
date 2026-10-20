@@ -79,11 +79,11 @@ class MainActivity : ComponentActivity() {
 }
 
 enum class CiroTab(val title: String, val icon: ImageVector) {
-    DASHBOARD("Dashboard", Icons.Default.Shield),
-    KUOTA_APP("Kuota App", Icons.Default.DataSaverOn),
-    HABITS("Habits", Icons.Default.Schedule),
-    STRICT_MODE("Strict Mode", Icons.Default.Lock),
-    SETTINGS("Pengaturan", Icons.Default.Settings)
+    DASHBOARD("Beranda", Icons.Default.Shield),
+    KUOTA_APP("Kuota", Icons.Default.DataSaverOn),
+    HABITS("Habit", Icons.Default.Schedule),
+    STRICT_MODE("Strict", Icons.Default.Lock),
+    SETTINGS("Setting", Icons.Default.Settings)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -278,19 +278,24 @@ fun CiroKuotaMainScreen(
                     NavigationBarItem(
                         selected = isSelected,
                         onClick = { currentTab = tab },
+                        alwaysShowLabel = true,
                         icon = {
                             Icon(
                                 imageVector = tab.icon,
                                 contentDescription = tab.title,
-                                tint = if (isSelected) AccentGreen else textSecondary
+                                tint = if (isSelected) AccentGreen else textSecondary,
+                                modifier = Modifier.size(20.dp)
                             )
                         },
                         label = {
                             Text(
                                 text = tab.title,
                                 fontFamily = PoppinsFontFamily,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                softWrap = false,
+                                textAlign = TextAlign.Center,
                                 color = if (isSelected) textPrimary else textSecondary
                             )
                         },
