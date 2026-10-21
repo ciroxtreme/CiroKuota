@@ -392,7 +392,13 @@ fun CiroKuotaMainScreen(
                         textSecondary = textSecondary,
                         quotaRefreshTrigger = quotaRefreshTrigger,
                         onManageAppBlockApps = { showAppBlockPickerDialog = true },
-                        onOpenCustomAppQuotaDialog = { showCustomAppQuotaDialog = true },
+                        onOpenCustomAppQuotaDialog = {
+                            commitmentDialogTitle = "ATUR LIMIT KUOTA APLIKASI"
+                            commitmentDialogDesc = "Anda akan mengubah batasan kuota untuk aplikasi yang diproteksi. Pastikan ini bukan bentuk kelonggaran yang impulsif."
+                            pendingCommitmentAction = {
+                                showCustomAppQuotaDialog = true
+                            }
+                        },
                         onToggleCondByAppQuota = {
                             if (isCondByAppQuota) {
                                 commitmentDialogTitle = "MATIKAN PENGAMAN KUOTA APLIKASI"
@@ -694,10 +700,17 @@ fun CiroKuotaMainScreen(
             cardBorder = cardBorder,
             textPrimary = textPrimary,
             textSecondary = textSecondary,
-            onSave = {
-                quotaRefreshTrigger++
-                showCustomAppQuotaDialog = false
-                Toast.makeText(context, "Limit kuota per aplikasi berhasil disimpan!", Toast.LENGTH_SHORT).show()
+            onSave = { updatedBudgets ->
+                commitmentDialogTitle = "KONFIRMASI SIMPAN LIMIT KUOTA"
+                commitmentDialogDesc = "Anda akan menerapkan perubahan limit kuota aplikasi ini. Apakah Anda yakin dengan komitmen Anda?"
+                pendingCommitmentAction = {
+                    for ((pkg, mb) in updatedBudgets) {
+                        QuotaManager.setAppSpecificBudgetMb(context, pkg, mb)
+                    }
+                    quotaRefreshTrigger++
+                    showCustomAppQuotaDialog = false
+                    Toast.makeText(context, "Limit kuota per aplikasi berhasil disimpan!", Toast.LENGTH_SHORT).show()
+                }
             },
             onDismiss = { showCustomAppQuotaDialog = false }
         )
@@ -2938,7 +2951,7 @@ fun CustomAppQuotaDialog(
     cardBorder: Color,
     textPrimary: Color,
     textSecondary: Color,
-    onSave: () -> Unit,
+    onSave: (Map<String, Float>) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -3071,11 +3084,12 @@ fun CustomAppQuotaDialog(
         confirmButton = {
             Button(
                 onClick = {
+                    val result = mutableMapOf<String, Float>()
                     for ((pkg, valueStr) in inputValues) {
                         val mb = valueStr.toFloatOrNull() ?: 100f
-                        QuotaManager.setAppSpecificBudgetMb(context, pkg, mb)
+                        result[pkg] = mb
                     }
-                    onSave()
+                    onSave(result)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)
             ) {
