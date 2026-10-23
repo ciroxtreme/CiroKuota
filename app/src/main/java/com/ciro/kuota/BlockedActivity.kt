@@ -49,6 +49,7 @@ class BlockedActivity : ComponentActivity() {
 
         val appName = intent.getStringExtra("EXTRA_APP_NAME") ?: "Aplikasi Target"
         val reason = intent.getStringExtra("EXTRA_REASON") ?: "Batas kuota atau sesi waktu telah habis."
+        val isHardBlock = intent.getBooleanExtra("EXTRA_IS_HARD_BLOCK", false)
 
         setContent {
             val context = LocalContext.current
@@ -60,6 +61,7 @@ class BlockedActivity : ComponentActivity() {
                 BlockedScreen(
                     targetApp = appName,
                     reason = reason,
+                    isHardBlock = isHardBlock,
                     isTotpConfigured = isTotpConfigured,
                     onGoHome = {
                         val homeIntent = Intent(Intent.ACTION_MAIN).apply {
@@ -134,6 +136,7 @@ class BlockedActivity : ComponentActivity() {
 fun BlockedScreen(
     targetApp: String,
     reason: String,
+    isHardBlock: Boolean,
     isTotpConfigured: Boolean,
     onGoHome: () -> Unit,
     onOpenApp: () -> Unit,
@@ -169,11 +172,12 @@ fun BlockedScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "AKSES DIBATASI",
+                text = if (isHardBlock) "KUOTA HANGUS - BLOKIR TOTAL" else "AKSES DIBATASI",
                 fontFamily = RighteousFontFamily,
-                fontSize = 26.sp,
-                color = DarkTextPrimary,
-                letterSpacing = 1.sp
+                fontSize = if (isHardBlock) 22.sp else 26.sp,
+                color = AccentRed,
+                letterSpacing = 1.sp,
+                textAlign = TextAlign.Center
             )
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -188,12 +192,12 @@ fun BlockedScreen(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Reason Card
+            // Reason Card & Hukuman Kejam
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 color = DarkCard,
-                border = androidx.compose.foundation.BorderStroke(1.dp, DarkCardBorder)
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (isHardBlock) AccentRed.copy(alpha = 0.5f) else DarkCardBorder)
             ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
@@ -208,20 +212,33 @@ fun BlockedScreen(
                         textAlign = TextAlign.Center,
                         lineHeight = 20.sp
                     )
-                    Text(
-                        text = "💡 Tuan Ciro, kuota Wi-Fi & waktu Anda sangat berharga. Saatnya istirahat sejenak!",
-                        fontFamily = PoppinsFontFamily,
-                        fontSize = 12.sp,
-                        color = DarkTextMuted,
-                        textAlign = TextAlign.Center
-                    )
+
+                    if (isHardBlock) {
+                        Text(
+                            text = "☠️ HUKUMAN KEJAM ☠️\nNafsu murahan 5 menit mau ngorbanin masa depan lu?! Kuota lu udah habis dilahap Douyin/konten pemicu. Pintu darurat DIHANCURKAN! Gaada matematika, gaada TOTP. Tarik nafas, taruh HP, cuci muka, lu bukan budak dopamin!",
+                            fontFamily = PoppinsFontFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.5.sp,
+                            color = AccentRed,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 18.sp
+                        )
+                    } else {
+                        Text(
+                            text = "💡 Tuan Ciro, kuota Wi-Fi & waktu Anda sangat berharga. Saatnya istirahat sejenak!",
+                            fontFamily = PoppinsFontFamily,
+                            fontSize = 12.sp,
+                            color = DarkTextMuted,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // Action: Tantangan Neraka (Emergency Unlock) jika TOTP sudah dikonfigurasi
-            if (isTotpConfigured) {
+            // Action: Tantangan Neraka (Emergency Unlock) - HANYA jika bukan Hard Block (bukan kuota habis)
+            if (!isHardBlock && isTotpConfigured) {
                 Button(
                     onClick = onStartChallenge,
                     modifier = Modifier
@@ -246,7 +263,7 @@ fun BlockedScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(14.dp))
             }
 
             // Action: Go to Home

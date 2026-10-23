@@ -200,6 +200,8 @@ class CiroAccessibilityService : AccessibilityService() {
             val appName = QuotaManager.getAppDisplayName(applicationContext, pkg)
             var reason: String? = null
 
+            var isHardBlock = false
+
             // 1. Kondisi Global / Strict Mode / Killswitch
             if (isKillswitch) {
                 reason = "🚨 Stop Data Aktif! Akses ke $appName sementara dihentikan total."
@@ -210,13 +212,14 @@ class CiroAccessibilityService : AccessibilityService() {
                 reason = "📊 By Kuota Utama: Budget Total Kuota Internet HP (${quotaStatus.budgetMb.toInt()} MB) telah habis! Akses ke $appName diblokir otomatis."
             }
 
-            // 2. Kondisi Tab Pengaman Kuota (By Custom Quota per App)
+            // 2. Kondisi Tab Pengaman Kuota (By Custom Quota per App) - KATEGORI HITAM
             if (reason == null && isTargetQuotaApp) {
                 val isCondByAppQuota = QuotaManager.isCondByAppQuotaActive(applicationContext)
                 val appSpecificBudgetMb = QuotaManager.getAppSpecificBudgetMb(applicationContext, pkg)
                 val appUsageMb = if (isCondByAppQuota) QuotaManager.getAppMonitoredUsageMb(applicationContext, pkg) else 0f
                 if (isCondByAppQuota && appUsageMb >= appSpecificBudgetMb) {
-                    reason = "📊 By Kuota App: Pemakaian $appName (${String.format(Locale.US, "%.1f", appUsageMb)} MB) telah mencapai batas limit (${appSpecificBudgetMb.toInt()} MB)!"
+                    reason = "📊 Kuota Aplikasi Habis: Pemakaian $appName (${String.format(Locale.US, "%.1f", appUsageMb)} MB) telah melampaui limit (${appSpecificBudgetMb.toInt()} MB)!"
+                    isHardBlock = true
                 }
             }
 
@@ -265,12 +268,12 @@ class CiroAccessibilityService : AccessibilityService() {
 
             if (reason != null) {
                 lastBlockedTime = now
-                triggerBlock(appName, reason)
+                triggerBlock(appName, reason, isHardBlock)
             }
         } catch (_: Throwable) {}
     }
 
-    private fun triggerBlock(appName: String, reason: String) {
+    private fun triggerBlock(appName: String, reason: String, isHardBlock: Boolean = false) {
         try {
             // Step 1: Throw back to Home
             performGlobalAction(GLOBAL_ACTION_HOME)
@@ -281,6 +284,7 @@ class CiroAccessibilityService : AccessibilityService() {
                     val blockIntent = Intent(applicationContext, BlockedActivity::class.java).apply {
                         putExtra("EXTRA_APP_NAME", appName)
                         putExtra("EXTRA_REASON", reason)
+                        putExtra("EXTRA_IS_HARD_BLOCK", isHardBlock)
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                     }
                     startActivity(blockIntent)
